@@ -1,0 +1,10 @@
+{
+  "kind": "top-products",
+  "source": "sales",
+  "filters": {
+    "startDatePT": "2026-03-01",
+    "endDatePT": "2026-03-30",
+    "territory": "US",
+    "limit": 10
+  }
+}

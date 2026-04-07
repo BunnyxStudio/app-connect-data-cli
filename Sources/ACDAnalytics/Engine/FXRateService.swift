@@ -1,0 +1,153 @@
+import Foundation
+import ACDCore
+
+public struct FXLookupRequest: Hashable, Codable, Sendable {
+    public var dateKey: String
+    public var currencyCode: String
+
+    public init(dateKey: String, currencyCode: String) {
+        self.dateKey = dateKey
+        self.currencyCode = currencyCode
+    }
+
+    public var recordKey: String {
+        "\(dateKey)|\(currencyCode)"
+    }
+}
+
+public enum FXRateServiceError: LocalizedError {
+    case invalidURL
+    case unresolvedRates([FXLookupRequest])
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "Failed to build FX rate request."
+        case .unresolvedRates(let requests):
+            let preview = requests.prefix(4).map { "\($0.dateKey)/\($0.currencyCode)" }.joined(separator: ", ")
+            return "Missing FX rates for \(requests.count) request(s): \(preview)"
+        }
+    }
+}
+
+private struct CachedFXRate: Codable {
+    var requestDateKey: String
+    var sourceDateKey: String
+    var currencyCode: String
+    var usdPerUnit: Double
+    var fetchedAt: Date
+}
+
+public actor FXRateService {
+    private let cacheURL: URL
+    private let session: URLSession
+    private let fileManager: FileManager
+    private let baseURL = URL(string: "https://api.frankfurter.app")!
+
+    public init(cacheURL: URL, session: URLSession = .shared, fileManager: FileManager = .default) {
+        self.cacheURL = cacheURL
+        self.session = session
+        self.fileManager = fileManager
+    }
+
+    public func resolveUSDRates(for requests: Set<FXLookupRequest>) async throws -> [FXLookupRequest: Double] {
+        guard requests.isEmpty == false else { return [:] }
+
+        var cached = try loadCache()
+        var resolved: [FXLookupRequest: Double] = [:]
+        var missingByDate: [String: Set<String>] = [:]
+
+        for request in requests {
+            let normalized = request.currencyCode.normalizedCurrencyCode
+            if normalized == "USD" {
+                resolved[request] = 1
+                continue
+            }
+            if normalized.isUnknownCurrencyCode {
+                resolved[request] = 0
+                continue
+            }
+            let key = FXLookupRequest(dateKey: request.dateKey, currencyCode: normalized)
+            if let existing = cached[key.recordKey], existing.usdPerUnit > 0 {
+                resolved[request] = existing.usdPerUnit
+                continue
+            }
+            missingByDate[request.dateKey, default: []].insert(normalized)
+        }
+
+        for (dateKey, currencies) in missingByDate {
+            let fetched = try await fetchRates(dateKey: dateKey, currencies: Array(currencies))
+            for (currency, rate) in fetched {
+                let record = CachedFXRate(
+                    requestDateKey: dateKey,
+                    sourceDateKey: dateKey,
+                    currencyCode: currency,
+                    usdPerUnit: rate,
+                    fetchedAt: Date()
+                )
+                cached["\(dateKey)|\(currency)"] = record
+            }
+        }
+
+        try saveCache(cached)
+
+        var unresolved: [FXLookupRequest] = []
+        for request in requests {
+            let key = FXLookupRequest(dateKey: request.dateKey, currencyCode: request.currencyCode.normalizedCurrencyCode)
+            if let cachedRate = cached[key.recordKey], cachedRate.usdPerUnit > 0 {
+                resolved[request] = cachedRate.usdPerUnit
+            } else if resolved[request] == nil {
+                unresolved.append(request)
+            }
+        }
+        if unresolved.isEmpty == false {
+            throw FXRateServiceError.unresolvedRates(unresolved)
+        }
+        return resolved
+    }
+
+    private func fetchRates(dateKey: String, currencies: [String]) async throws -> [String: Double] {
+        guard currencies.isEmpty == false else { return [:] }
+        var components = URLComponents(url: baseURL.appendingPathComponent(dateKey), resolvingAgainstBaseURL: false)
+        components?.queryItems = [
+            URLQueryItem(name: "from", value: "USD"),
+            URLQueryItem(name: "to", value: currencies.sorted().joined(separator: ","))
+        ]
+        guard let url = components?.url else {
+            throw FXRateServiceError.invalidURL
+        }
+
+        let (data, _) = try await session.data(from: url)
+        let response = try JSONDecoder().decode(FrankfurterResponse.self, from: data)
+        var result: [String: Double] = [:]
+        for (currency, value) in response.rates where value != 0 {
+            result[currency] = 1 / value
+        }
+        return result
+    }
+
+    private func loadCache() throws -> [String: CachedFXRate] {
+        guard fileManager.fileExists(atPath: cacheURL.path) else { return [:] }
+        let data = try Data(contentsOf: cacheURL)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([String: CachedFXRate].self, from: data)
+    }
+
+    private func saveCache(_ cache: [String: CachedFXRate]) throws {
+        let parent = cacheURL.deletingLastPathComponent()
+        if fileManager.fileExists(atPath: parent.path) == false {
+            try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(cache)
+        try data.write(to: cacheURL, options: .atomic)
+    }
+}
+
+private struct FrankfurterResponse: Decodable {
+    var date: String
+    var rates: [String: Double]
+}

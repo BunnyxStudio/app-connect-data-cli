@@ -1,0 +1,13 @@
+.DS_Store
+.build
+.swiftpm
+Packages
+DerivedData
+.acd
+*.xcodeproj
+*.xcworkspace
+*.xcuserstate
+*.p8
+*.pem
+*.ipa
+*.xcarchive
