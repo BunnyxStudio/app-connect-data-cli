@@ -44,6 +44,17 @@ public final class SyncService {
         return SyncSummary(records: records)
     }
 
+    public func syncSales(
+        window: PTDateWindow,
+        force: Bool
+    ) async throws -> SyncSummary {
+        try await syncSales(
+            dates: ptDates(in: window, excludingFullMonths: true),
+            monthlyFiscalMonths: fullFiscalMonthsContained(in: window),
+            force: force
+        )
+    }
+
     public func syncSubscriptions(
         dates: [Date],
         force: Bool
@@ -59,6 +70,13 @@ public final class SyncService {
             records.append(try cacheStore.record(report: subscribers))
         }
         return SyncSummary(records: records)
+    }
+
+    public func syncSubscriptions(
+        window: PTDateWindow,
+        force: Bool
+    ) async throws -> SyncSummary {
+        try await syncSubscriptions(dates: ptDates(in: window), force: force)
     }
 
     public func syncFinance(
@@ -83,6 +101,20 @@ public final class SyncService {
             }
         }
         return SyncSummary(records: records)
+    }
+
+    public func syncFinance(
+        window: PTDateWindow,
+        regionCodes: [String],
+        reportTypes: [FinanceReportType],
+        force: Bool
+    ) async throws -> SyncSummary {
+        try await syncFinance(
+            fiscalMonths: fiscalMonthsOverlapping(window: window),
+            regionCodes: regionCodes,
+            reportTypes: reportTypes,
+            force: force
+        )
     }
 
     public func syncReviews(

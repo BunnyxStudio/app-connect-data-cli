@@ -158,6 +158,7 @@ public final class ReportDownloader: ReportDownloaderProtocol {
 
         if cachePolicy == .useCached,
            fileManager.fileExists(atPath: textURL.path),
+           (try? LocalFileSecurity.validateOwnerOnlyFile(textURL, fileManager: fileManager)) != nil,
            let text = try? String(contentsOf: textURL, encoding: .utf8) {
             return DownloadedReport(
                 source: source,
@@ -177,6 +178,7 @@ public final class ReportDownloader: ReportDownloaderProtocol {
         } catch {
             if cachePolicy == .useCached,
                fileManager.fileExists(atPath: textURL.path),
+               (try? LocalFileSecurity.validateOwnerOnlyFile(textURL, fileManager: fileManager)) != nil,
                let text = try? String(contentsOf: textURL, encoding: .utf8) {
                 return DownloadedReport(
                     source: source,
@@ -194,7 +196,7 @@ public final class ReportDownloader: ReportDownloaderProtocol {
         let textData: Data
         if data.isGzipData {
             textData = try data.gunzipped()
-            try data.write(to: gzipURL, options: .atomic)
+            try LocalFileSecurity.writePrivateData(data, to: gzipURL, fileManager: fileManager)
         } else {
             textData = data
         }
@@ -203,7 +205,7 @@ public final class ReportDownloader: ReportDownloaderProtocol {
             throw ReportDownloaderError.invalidText
         }
 
-        try textData.write(to: textURL, options: .atomic)
+        try LocalFileSecurity.writePrivateData(textData, to: textURL, fileManager: fileManager)
         return DownloadedReport(
             source: source,
             reportType: reportType,
@@ -218,22 +220,16 @@ public final class ReportDownloader: ReportDownloaderProtocol {
 
     private func reportsRootDirectory() throws -> URL {
         let root = reportsRootDirectoryURL
-        if !fileManager.fileExists(atPath: root.path) {
-            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
-        }
+        try LocalFileSecurity.ensurePrivateDirectory(root, fileManager: fileManager)
         return root
     }
 
     private func folder(for source: ReportSource, dateKey: String) throws -> URL {
         let root = try reportsRootDirectory()
         let sourceFolder = root.appendingPathComponent(source.rawValue, isDirectory: true)
-        if !fileManager.fileExists(atPath: sourceFolder.path) {
-            try fileManager.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
-        }
+        try LocalFileSecurity.ensurePrivateDirectory(sourceFolder, fileManager: fileManager)
         let dateFolder = sourceFolder.appendingPathComponent(dateKey, isDirectory: true)
-        if !fileManager.fileExists(atPath: dateFolder.path) {
-            try fileManager.createDirectory(at: dateFolder, withIntermediateDirectories: true)
-        }
+        try LocalFileSecurity.ensurePrivateDirectory(dateFolder, fileManager: fileManager)
         return dateFolder
     }
 }

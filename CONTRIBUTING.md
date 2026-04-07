@@ -1,6 +1,6 @@
 # Contributing
 
-感谢你愿意参与 `acd`。
+感谢你愿意参与 `app-connect-data-cli`。
 
 ## 开发环境
 
@@ -13,7 +13,7 @@
 ```bash
 swift build
 swift test
-./.build/debug/acd --help
+./.build/debug/app-connect-data-cli --help
 ```
 
 ## 提 PR 前

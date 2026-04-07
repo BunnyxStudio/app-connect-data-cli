@@ -6,11 +6,11 @@ import Foundation
 final class AnalyticsEngineTests: XCTestCase {
     func testSalesSnapshotAndReviewsSummaryFromCache() async throws {
         let temp = try makeTempDirectory()
-        let cacheStore = CacheStore(rootDirectory: temp.appendingPathComponent(".acd/cache", isDirectory: true))
+        let cacheStore = CacheStore(rootDirectory: temp.appendingPathComponent(".app-connect-data-cli/cache", isDirectory: true))
         try cacheStore.prepare()
 
         let salesFile = cacheStore.reportsDirectory.appendingPathComponent("sales.tsv")
-        try sampleSalesTSV.write(to: salesFile, atomically: true, encoding: .utf8)
+        try LocalFileSecurity.writePrivateData(Data(sampleSalesTSV.utf8), to: salesFile)
         let salesReport = DownloadedReport(
             source: .sales,
             reportType: "SALES",
@@ -24,7 +24,7 @@ final class AnalyticsEngineTests: XCTestCase {
         _ = try cacheStore.record(report: salesReport)
 
         let financeFile = cacheStore.reportsDirectory.appendingPathComponent("finance.tsv")
-        try sampleFinanceTSV.write(to: financeFile, atomically: true, encoding: .utf8)
+        try LocalFileSecurity.writePrivateData(Data(sampleFinanceTSV.utf8), to: financeFile)
         let financeReport = DownloadedReport(
             source: .finance,
             reportType: "FINANCIAL",

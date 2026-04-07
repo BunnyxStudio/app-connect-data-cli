@@ -1,6 +1,6 @@
 # Query Spec
 
-`acd query run --spec <file|->` 接收 JSON。
+`app-connect-data-cli query run --spec <file|->` 接收 JSON。
 
 ## Schema
 
@@ -9,8 +9,7 @@
   "kind": "snapshot",
   "source": "sales",
   "filters": {
-    "startDatePT": "2026-03-01",
-    "endDatePT": "2026-03-30",
+    "rangePreset": "last-week",
     "territory": "US",
     "device": "iPhone",
     "limit": 10
@@ -47,8 +46,14 @@
 
 ## `filters`
 
-- `startDatePT`: `YYYY-MM-DD`
-- `endDatePT`: `YYYY-MM-DD`
+时间字段三选一：
+
+- `datePT`: `YYYY-MM-DD`
+- `startDatePT` + `endDatePT`
+- `rangePreset`
+
+其他字段：
+
 - `territory`
 - `device`
 - `limit`

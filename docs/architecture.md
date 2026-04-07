@@ -1,6 +1,6 @@
 # Architecture
 
-仓库分三层：
+仓库分三层。
 
 ## `ACDCore`
 
@@ -12,38 +12,43 @@
 - 报表下载
 - 报表解析
 - 评论接口
+- PT 时间范围解析
 
 这一层不关心 CLI。
-也不关心数据库和 UI。
+也不关心 UI。
 
 ## `ACDAnalytics`
 
 负责纯数据层：
 
+- 原始报表 cache
 - manifest
-- 原始报表缓存
-- FX 缓存
+- FX cache
 - 聚合计算
-- health / snapshot / trend / top-products
+- health / snapshot / modules / trend / top-products
 - 评论摘要
 
-这一层不依赖 SwiftData。
-只读本地文件。
+这一层只读本地文件。
+不依赖 SwiftData。
 
 ## `ACDCLI`
 
-负责命令行：
+负责用户入口：
 
 - 配置解析
-- 命令路由
+- 时间参数解析
+- 按需补数据
 - 输出格式
 - agent query spec
 
 ## 数据流
 
-1. `sync` 命令调用 `ACDCore`
-2. 原始报表写入 `.acd/cache/reports`
-3. manifest 记录下载元数据
-4. `query` 命令调用 `ACDAnalytics`
-5. `ACDAnalytics` 读取报表并按需做 FX 转换和聚合
-6. `ACDCLI` 把结果输出为 `json` / `table` / `markdown`
+1. 用户直接执行 `query` 或 `reviews`
+2. CLI 先解析 `--date / --from / --to / --range`
+3. 有凭据时，CLI 按需拉取需要的报表或评论
+4. 原始数据写入 `.app-connect-data-cli/cache/`
+5. `ACDAnalytics` 读取 cache 并聚合
+6. CLI 输出 `json` / `table` / `markdown`
+
+`sync` 仍然存在。
+但它只是高级预热入口，不是默认流程。

@@ -75,10 +75,10 @@ public final class CacheStore {
     }
 
     public func prepare() throws {
+        // CacheStore only persists downloaded reports, reviews, and FX metadata.
+        // Credentials and .p8 contents are never written here.
         for url in [rootDirectory, reportsDirectory, reviewsDirectory] {
-            if fileManager.fileExists(atPath: url.path) == false {
-                try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
-            }
+            try LocalFileSecurity.ensurePrivateDirectory(url, fileManager: fileManager)
         }
     }
 
@@ -118,6 +118,7 @@ public final class CacheStore {
 
     public func loadManifest() throws -> [CachedReportRecord] {
         guard fileManager.fileExists(atPath: manifestURL.path) else { return [] }
+        try LocalFileSecurity.validateOwnerOnlyFile(manifestURL, fileManager: fileManager)
         let data = try Data(contentsOf: manifestURL)
         return try JSONDecoder.iso8601.decode([CachedReportRecord].self, from: data)
     }
@@ -125,11 +126,12 @@ public final class CacheStore {
     public func saveReviews(_ payload: CachedReviewsPayload) throws {
         try prepare()
         let data = try JSONEncoder.pretty.encode(payload)
-        try data.write(to: reviewsURL, options: .atomic)
+        try LocalFileSecurity.writePrivateData(data, to: reviewsURL, fileManager: fileManager)
     }
 
     public func loadReviews() throws -> CachedReviewsPayload? {
         guard fileManager.fileExists(atPath: reviewsURL.path) else { return nil }
+        try LocalFileSecurity.validateOwnerOnlyFile(reviewsURL, fileManager: fileManager)
         let data = try Data(contentsOf: reviewsURL)
         return try JSONDecoder.iso8601.decode(CachedReviewsPayload.self, from: data)
     }
@@ -141,7 +143,7 @@ public final class CacheStore {
 
     private func saveManifest(_ manifest: [CachedReportRecord]) throws {
         let data = try JSONEncoder.pretty.encode(manifest)
-        try data.write(to: manifestURL, options: .atomic)
+        try LocalFileSecurity.writePrivateData(data, to: manifestURL, fileManager: fileManager)
     }
 }
 

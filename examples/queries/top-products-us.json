@@ -2,8 +2,7 @@
   "kind": "top-products",
   "source": "sales",
   "filters": {
-    "startDatePT": "2026-03-01",
-    "endDatePT": "2026-03-30",
+    "rangePreset": "last-30d",
     "territory": "US",
     "limit": 10
   }

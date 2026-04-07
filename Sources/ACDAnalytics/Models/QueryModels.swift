@@ -1,21 +1,27 @@
 import Foundation
 
 public struct QueryFilters: Codable, Equatable, Sendable {
+    public var datePT: String?
     public var startDatePT: String?
     public var endDatePT: String?
+    public var rangePreset: String?
     public var territory: String?
     public var device: String?
     public var limit: Int?
 
     public init(
+        datePT: String? = nil,
         startDatePT: String? = nil,
         endDatePT: String? = nil,
+        rangePreset: String? = nil,
         territory: String? = nil,
         device: String? = nil,
         limit: Int? = nil
     ) {
+        self.datePT = datePT
         self.startDatePT = startDatePT
         self.endDatePT = endDatePT
+        self.rangePreset = rangePreset
         self.territory = territory
         self.device = device
         self.limit = limit

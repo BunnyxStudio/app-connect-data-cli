@@ -538,7 +538,11 @@ public final class AnalyticsEngine {
     }
 
     private func loadFile(_ path: String) -> String {
-        (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        let url = URL(fileURLWithPath: path)
+        guard (try? LocalFileSecurity.validateOwnerOnlyFile(url)) != nil else {
+            return ""
+        }
+        return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
     }
 
     private func resolvedRange(filters: QueryFilters, dates: [Date]) -> ClosedRange<Date>? {
@@ -550,13 +554,16 @@ public final class AnalyticsEngine {
     }
 
     private func explicitRange(filters: QueryFilters) -> ClosedRange<Date>? {
-        guard let startRaw = filters.startDatePT, let endRaw = filters.endDatePT,
-              let start = PTDate(startRaw).date, let end = PTDate(endRaw).date else {
+        guard let window = try? resolvePTDateWindow(
+            datePT: filters.datePT,
+            startDatePT: filters.startDatePT,
+            endDatePT: filters.endDatePT,
+            rangePreset: filters.rangePreset,
+            defaultPreset: nil
+        ) else {
             return nil
         }
-        let lower = min(start, end)
-        let upper = max(start, end)
-        return Calendar.pacific.startOfDay(for: lower)...Calendar.pacific.startOfDay(for: upper)
+        return window.startDate...window.endDate
     }
 
     private func inRange(_ date: Date, range: ClosedRange<Date>?) -> Bool {
@@ -566,20 +573,7 @@ public final class AnalyticsEngine {
     }
 
     private func fullMonthsContained(in range: ClosedRange<Date>) -> Set<String> {
-        var result: Set<String> = []
-        let calendar = Calendar.pacific
-        var cursor = calendar.date(from: calendar.dateComponents([.year, .month], from: range.lowerBound)) ?? range.lowerBound
-        while cursor <= range.upperBound {
-            guard let monthInterval = calendar.dateInterval(of: .month, for: cursor) else { break }
-            let monthStart = calendar.startOfDay(for: monthInterval.start)
-            let monthEnd = calendar.startOfDay(for: (calendar.date(byAdding: .day, value: -1, to: monthInterval.end) ?? monthInterval.end))
-            if range.lowerBound <= monthStart && range.upperBound >= monthEnd {
-                result.insert(monthStart.fiscalMonthString)
-            }
-            guard let next = calendar.date(byAdding: .month, value: 1, to: monthStart) else { break }
-            cursor = next
-        }
-        return result
+        Set(fullFiscalMonthsContained(in: PTDateWindow(startDate: range.lowerBound, endDate: range.upperBound)))
     }
 
     private func classifyProduct(productTypeIdentifier: String, parentIdentifier: String) -> ProductKind {

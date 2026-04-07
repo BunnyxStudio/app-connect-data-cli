@@ -1,56 +1,36 @@
-# apple-connect-trends-cli
+# app-connect-data-cli
 
-`acd` 是一个从 ACD 项目里抽出来的开源 Swift CLI。
+`app-connect-data-cli` is a command-line tool for querying App Store Connect sales, finance, subscription, and review data over explicit time ranges.
 
-它专注于 App Store Connect 的数据分析层。
-它做认证、报表下载、评论同步、缓存、聚合查询。
-它默认输出 JSON，适合 agent、脚本和 CI。
+Ask for a single day, a custom date window, or a preset such as `last-week`, and the CLI fetches the required data on demand. Raw files are cached locally, but caching stays in the background unless you want to control it.
 
-它不是一个全能版 `asc` 替代品。
-它不处理发布、TestFlight、metadata、证书、截图上传。
-如果你要做完整发版流程，请优先看 [rudrankriyam/App-Store-Connect-CLI](https://github.com/rudrankriyam/App-Store-Connect-CLI)。
+## What it does
 
-## 它是什么
+- Query sales and finance snapshots for a specific date range
+- Build dashboard-style module views without a separate sync step
+- Read and summarize customer reviews
+- Return output as `json`, `table`, or `markdown`
+- Provide a stable JSON spec entry point for agents and scripts
 
-- 一个 macOS-first 的 Swift CLI
-- 一个可复用的 `ACDCore` + `ACDAnalytics` 单仓库
-- 一个面向 agent 的 JSON-first 查询入口
-- 一个本地缓存驱动的数据分析工具
+## Scope
 
-## 它不是什么
+This project focuses on App Store Connect data access and analysis.
 
-- 不是 ACD iOS app 本体
-- 不是 SwiftUI dashboard
-- 不是付费、Widget、通知、Onboarding 代码集合
-- 不是完整 App Store 发布平台
+It does not cover release automation, TestFlight distribution, metadata management, signing, or screenshot upload workflows. If you need a broader App Store Connect CLI, see [App Store Connect CLI](https://github.com/rudrankriyam/App-Store-Connect-CLI).
 
-## 为什么和 `asc` 不同
+## Installation
 
-`asc` 的目标是覆盖更广的 App Store Connect 工作流。
-
-`acd` 的目标更窄。
-它只关心报表和评论这条链路：
-
-- 拉 Sales / Subscription / Finance 报表
-- 解析 TSV / GZ
-- 做本地缓存
-- 统一 PT 时间口径
-- 输出 snapshot / modules / health / trend / top-products
-- 给 agent 一个稳定的 `query run --spec` 入口
-
-## 5 分钟 Quick Start
-
-### 1. 构建
+Build from source:
 
 ```bash
-git clone <your-repo-url> apple-connect-trends-cli
-cd apple-connect-trends-cli
+git clone <your-repo-url> app-connect-data-cli
+cd app-connect-data-cli
 swift build -c release
 ```
 
-### 2. 配置
+## Configuration
 
-支持四个环境变量：
+You can configure credentials with environment variables:
 
 ```bash
 export ASC_ISSUER_ID="YOUR_ISSUER_ID"
@@ -59,12 +39,12 @@ export ASC_VENDOR_NUMBER="YOUR_VENDOR_NUMBER"
 export ASC_P8_PATH="/absolute/path/AuthKey_XXXXXX.p8"
 ```
 
-也支持配置文件：
+Or with a config file:
 
-- repo-local: `./.acd/config.json`
-- user-level: `~/.acd/config.json`
+- Repo-local: `./.app-connect-data-cli/config.json`
+- User-level: `~/.app-connect-data-cli/config.json`
 
-示例：
+Example:
 
 ```json
 {
@@ -75,48 +55,112 @@ export ASC_P8_PATH="/absolute/path/AuthKey_XXXXXX.p8"
 }
 ```
 
-优先级固定为：
+Resolution order:
 
-`flags > env > ./.acd/config.json > ~/.acd/config.json`
+`flags > environment variables > ./.app-connect-data-cli/config.json > ~/.app-connect-data-cli/config.json`
 
-### 3. 验证凭据
+For local file safety, the CLI expects owner-only permissions on both `config.json` and the `.p8` file.
+Use `chmod 600` if needed.
 
-```bash
-./.build/release/acd auth validate --output table
-```
+## Quick start
 
-### 4. 第一次 sync
-
-```bash
-./.build/release/acd sync sales --days 7
-./.build/release/acd sync subscriptions --days 7
-./.build/release/acd sync finance --months 2
-./.build/release/acd sync reviews --total-limit 200
-```
-
-### 5. 第一次 query
+Validate credentials:
 
 ```bash
-./.build/release/acd query snapshot --source sales --output table
-./.build/release/acd query modules --output markdown
-./.build/release/acd query health --output json
+./.build/release/app-connect-data-cli auth validate --output table
 ```
 
-## Agent 用法
-
-最稳定的入口是：
+Query sales for last week:
 
 ```bash
-acd query run --spec <file|-> --output json
+./.build/release/app-connect-data-cli query snapshot --source sales --range last-week --output table
 ```
 
-示例：
+Query a combined module view for the latest day:
 
 ```bash
-cat examples/queries/snapshot-30d.json | ./.build/release/acd query run - --output json
+./.build/release/app-connect-data-cli query modules --range last-day --output markdown
 ```
 
-支持的 `kind`：
+Summarize recent reviews:
+
+```bash
+./.build/release/app-connect-data-cli reviews summary --range last-week --output json
+```
+
+## Date selection
+
+Use any one of these:
+
+- `--date YYYY-MM-DD`
+- `--from YYYY-MM-DD --to YYYY-MM-DD`
+- `--range <preset>`
+
+Supported presets:
+
+- `today`
+- `last-day`
+- `last-week`
+- `last-7d`
+- `last-30d`
+- `this-week`
+- `this-month`
+- `last-month`
+
+Examples:
+
+```bash
+./.build/release/app-connect-data-cli query snapshot --date 2026-04-06
+./.build/release/app-connect-data-cli query snapshot --from 2026-04-01 --to 2026-04-06
+./.build/release/app-connect-data-cli query snapshot --range "last week"
+./.build/release/app-connect-data-cli query snapshot --range last-month
+```
+
+## Query model
+
+The default flow is direct query:
+
+1. Resolve the requested time range
+2. Fetch the required reports or reviews if credentials are available
+3. Reuse local cache when possible
+4. Return the result immediately
+
+Use these flags when you want tighter control:
+
+- `--offline` reads from local cache only
+- `--refresh` ignores cached raw files and fetches again
+
+## Privacy and security
+
+This project does not run a project-owned backend and does not upload your credentials to any app-connect-data-cli server.
+
+- Your `.p8` file stays on your machine
+- The CLI reads the `.p8` file from a local path and keeps the PEM in memory only for signing
+- The CLI does not write the `.p8` contents into config files, cache files, or generated output
+- Repo-local credentials and cache live under `.app-connect-data-cli/`, which is ignored by git
+- Cache directories and files are created with owner-only permissions
+- Existing `config.json`, `.p8`, and cache files are checked for owner-only permissions before use
+
+Network traffic goes directly to Apple App Store Connect endpoints for reports and reviews.
+
+For USD normalization, the CLI may also call the Frankfurter FX API with only a date and a list of currency codes.
+Those FX requests do not include your `.p8` file, JWT, vendor number, review text, or raw report contents.
+
+## Agent and automation usage
+
+The most stable interface for agents is:
+
+```bash
+app-connect-data-cli query run --spec <file|-> --output json
+```
+
+Example:
+
+```bash
+cat examples/queries/snapshot-30d.json | ./.build/release/app-connect-data-cli query run --spec - --output json
+```
+
+Supported `kind` values:
 
 - `snapshot`
 - `modules`
@@ -126,65 +170,70 @@ cat examples/queries/snapshot-30d.json | ./.build/release/acd query run - --outp
 - `reviews.list`
 - `reviews.summary`
 
-详情见 [docs/query-spec.md](docs/query-spec.md) 和 [docs/agent-guide.md](docs/agent-guide.md)。
+See [docs/query-spec.md](docs/query-spec.md) and [docs/agent-guide.md](docs/agent-guide.md) for details.
 
-## 常用命令
+## Common commands
 
 ```bash
-acd auth validate
+app-connect-data-cli auth validate
 
-acd sync sales
-acd sync subscriptions
-acd sync finance
-acd sync reviews
+app-connect-data-cli query snapshot --range last-week
+app-connect-data-cli query modules --range last-day
+app-connect-data-cli query health
+app-connect-data-cli query trend --source finance --range last-month
+app-connect-data-cli query top-products --territory US --range last-30d
+app-connect-data-cli query run --spec -
 
-acd query snapshot
-acd query modules
-acd query health
-acd query trend
-acd query top-products
-acd query run --spec -
+app-connect-data-cli reviews list --range last-week
+app-connect-data-cli reviews summary --range last-week
+app-connect-data-cli reviews respond REVIEW_ID --body "Thanks for the feedback."
 
-acd reviews list
-acd reviews summary
-acd reviews respond REVIEW_ID --body "Thanks for the feedback."
+app-connect-data-cli doctor probe
+app-connect-data-cli doctor audit
+app-connect-data-cli doctor reconcile --range last-month
 
-acd doctor probe
-acd doctor audit
-acd doctor reconcile
-
-acd cache clear
+app-connect-data-cli cache clear
 ```
 
-## 缓存
+## Advanced prefetch
 
-默认不使用数据库。
-只使用本地文件缓存。
+`sync` is still available for prefetching, warming cache, or debugging fetch coverage, but it is not required for normal use.
 
-- 如果当前目录存在 `./.acd/`，优先用 repo-local cache
-- 否则使用 `~/.acd/cache/`
+```bash
+app-connect-data-cli sync sales --days 7
+app-connect-data-cli sync subscriptions --days 7
+app-connect-data-cli sync finance --months 2
+app-connect-data-cli sync reviews --total-limit 200
+```
 
-缓存内容包括：
+## Local cache
 
-- 原始报表
-- manifest
-- 评论快照
-- FX rates
+This project uses local files instead of a database.
 
-## 开发
+- Repo-local: `./.app-connect-data-cli/cache/`
+- User-level: `~/.app-connect-data-cli/cache/`
+
+Cached content includes:
+
+- Raw report files
+- `manifest.json`
+- `reviews/latest.json`
+- `fx-rates.json`
+
+## Development
 
 ```bash
 swift build
 swift test
-./.build/debug/acd --help
+./.build/debug/app-connect-data-cli --help
 ```
 
-## 支持与反馈
+## Support
 
-- 使用问题：GitHub Discussions
-- Bug 和功能请求：GitHub Issues
-- 安全问题：见 [SECURITY.md](SECURITY.md)
-- 开发贡献：见 [CONTRIBUTING.md](CONTRIBUTING.md)
+- Usage questions: GitHub Discussions
+- Bugs and feature requests: GitHub Issues
+- Security issues: [SECURITY.md](SECURITY.md)
+- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 

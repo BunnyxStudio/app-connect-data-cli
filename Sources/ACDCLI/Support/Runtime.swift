@@ -4,16 +4,19 @@ import ACDAnalytics
 
 enum RuntimeError: LocalizedError {
     case missingHomeDirectory
-    case invalidDate(String)
 
     var errorDescription: String? {
         switch self {
         case .missingHomeDirectory:
             return "Unable to resolve home directory."
-        case .invalidDate(let value):
-            return "Invalid PT date: \(value)"
         }
     }
+}
+
+enum CredentialsMode {
+    case disabled
+    case optional
+    case required
 }
 
 struct RuntimePaths {
@@ -45,15 +48,15 @@ struct RuntimeContext {
 enum RuntimeFactory {
     static func make(
         overrides: CredentialsOverrides = CredentialsOverrides(),
-        requireCredentials: Bool
+        credentialsMode: CredentialsMode
     ) throws -> RuntimeContext {
         let fileManager = FileManager.default
         let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true)
-        let localBase = cwd.appendingPathComponent(".acd", isDirectory: true)
+        let localBase = cwd.appendingPathComponent(".app-connect-data-cli", isDirectory: true)
         guard let homeDirectory = fileManager.homeDirectoryForCurrentUser as URL? else {
             throw RuntimeError.missingHomeDirectory
         }
-        let userBase = homeDirectory.appendingPathComponent(".acd", isDirectory: true)
+        let userBase = homeDirectory.appendingPathComponent(".app-connect-data-cli", isDirectory: true)
         let activeBase: URL
         if fileManager.fileExists(atPath: localBase.appendingPathComponent("cache").path)
             || fileManager.fileExists(atPath: localBase.appendingPathComponent("config.json").path)
@@ -70,6 +73,7 @@ enum RuntimeFactory {
             activeBase: activeBase,
             cacheRoot: cacheRoot
         )
+        try LocalFileSecurity.ensurePrivateDirectory(activeBase, fileManager: fileManager)
         let config = try resolveConfig(paths: paths, overrides: overrides)
         let cacheStore = CacheStore(rootDirectory: cacheRoot)
         try cacheStore.prepare()
@@ -77,7 +81,25 @@ enum RuntimeFactory {
             cacheStore: cacheStore,
             fxService: FXRateService(cacheURL: cacheStore.fxCacheURL)
         )
-        if requireCredentials == false {
+        if credentialsMode == .disabled {
+            return RuntimeContext(
+                config: config,
+                credentials: nil,
+                paths: paths,
+                cacheStore: cacheStore,
+                client: nil,
+                downloader: nil,
+                syncService: nil,
+                analytics: analytics
+            )
+        }
+
+        let hasCredentialHints = [config.issuerID, config.keyID, config.vendorNumber, config.p8Path]
+            .contains { value in
+                guard let value else { return false }
+                return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            }
+        if credentialsMode == .optional, hasCredentialHints == false {
             return RuntimeContext(
                 config: config,
                 credentials: nil,
@@ -138,13 +160,18 @@ enum RuntimeFactory {
 
     private static func loadConfig(at url: URL) throws -> ACDConfig? {
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        try LocalFileSecurity.validateOwnerOnlyFile(url)
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(ACDConfig.self, from: data)
     }
 
     private static func resolvedPrivateKeyPEM(config: ACDConfig) throws -> String {
         guard let p8Path = config.p8Path else { throw SetupValidationError.missingP8 }
-        return try P8Importer().loadPrivateKeyPEM(from: URL(fileURLWithPath: p8Path))
+        let url = URL(fileURLWithPath: p8Path)
+        try LocalFileSecurity.validateOwnerOnlyFile(url)
+        // The .p8 content is loaded from the user-provided file only for local signing.
+        // It is never written into config, cache, or any project-managed file.
+        return try P8Importer().loadPrivateKeyPEM(from: url)
     }
 
     private static func firstNonEmpty(_ values: String?...) -> String? {
@@ -158,7 +185,7 @@ func parsePTDateInput(_ value: String) throws -> Date {
     if let date = PTDate(value).date {
         return date
     }
-    throw RuntimeError.invalidDate(value)
+    throw PTDateWindowError.invalidDate(value)
 }
 
 func recentPTDates(days: Int, endingAt reference: Date = Date()) -> [Date] {

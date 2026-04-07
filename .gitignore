@@ -4,6 +4,7 @@
 Packages
 DerivedData
 .acd
+.app-connect-data-cli
 *.xcodeproj
 *.xcworkspace
 *.xcuserstate

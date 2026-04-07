@@ -4,8 +4,8 @@
 
 1. flags
 2. environment variables
-3. `./.acd/config.json`
-4. `~/.acd/config.json`
+3. `./.app-connect-data-cli/config.json`
+4. `~/.app-connect-data-cli/config.json`
 
 ## 支持的环境变量
 
@@ -16,10 +16,11 @@
 
 ## cache 位置
 
-优先规则：
+- repo-local: `./.app-connect-data-cli/cache/`
+- user-level: `~/.app-connect-data-cli/cache/`
 
-- 如果当前目录存在 `./.acd/`，使用 repo-local cache
-- 否则使用 `~/.acd/cache/`
+CLI 会优先使用当前仓库里的 repo-local 目录。
+没有时再回退到用户级目录。
 
 ## cache 内容
 
@@ -28,8 +29,15 @@
 - `reviews/latest.json`
 - `fx-rates.json`
 
+## cache 语义
+
+- cache 是内部实现
+- 默认查询会优先复用已有文件
+- `--refresh` 会强制重新拉取
+- `--offline` 会禁止联网
+
 ## 清理 cache
 
 ```bash
-acd cache clear
+app-connect-data-cli cache clear
 ```

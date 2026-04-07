@@ -11,11 +11,30 @@
 - `FINANCE_DETAIL/Z1`
 - customer reviews
 
+## Time model
+
+所有日级时间都按 PT。
+
+用户可以用三种方式给时间：
+
+- `datePT`
+- `startDatePT` + `endDatePT`
+- `rangePreset`
+
+`rangePreset` 支持：
+
+- `today`
+- `last-day`
+- `last-week`
+- `last-7d`
+- `last-30d`
+- `this-week`
+- `this-month`
+- `last-month`
+
 ## Core outputs
 
 ### `DashboardSnapshot`
-
-基础汇总：
 
 - units
 - installs
@@ -27,8 +46,6 @@
 
 ### `DashboardModuleSnapshot`
 
-组合输出：
-
 - overview
 - growth
 - subscription
@@ -36,8 +53,6 @@
 - dataHealth
 
 ### `DataHealthSnapshot`
-
-数据完整度和滞后情况：
 
 - sales as-of
 - subscription as-of

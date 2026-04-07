@@ -8,7 +8,7 @@
 
 ## 提 bug 时请附带
 
-- `acd version` 或 commit hash
+- commit hash
 - macOS 和 Xcode / Swift 版本
 - 复现命令
 - 实际结果

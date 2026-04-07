@@ -3,14 +3,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "apple-connect-trends-cli",
+    name: "app-connect-data-cli",
     platforms: [
         .macOS(.v14)
     ],
     products: [
         .library(name: "ACDCore", targets: ["ACDCore"]),
         .library(name: "ACDAnalytics", targets: ["ACDAnalytics"]),
-        .executable(name: "acd", targets: ["ACDCLI"])
+        .executable(name: "app-connect-data-cli", targets: ["ACDCLI"])
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0")

@@ -1,22 +1,24 @@
 # Agent Guide
 
-如果你是外部 agent，推荐只走这条路径：
+推荐只走这一条：
 
 ```bash
-acd query run --spec <file|-> --output json
+app-connect-data-cli query run --spec <file|-> --output json
 ```
 
-原因很简单：
+原因：
 
+- 入口稳定
 - 输出结构稳定
-- 不需要猜 flags
-- 更适合把查询模板版本化
+- 时间范围可以直接写在 spec 里
+- 不需要先手动 `sync`
 
 ## 推荐流程
 
-1. 先做 `sync`
-2. 再做 `query run`
-3. 只消费 JSON
+1. 生成一个 JSON spec
+2. 直接调用 `query run --spec`
+3. 默认让 CLI 自己按需拉数据
+4. 只有明确要求离线时才加 `--offline`
 
 ## 示例
 
@@ -36,8 +38,8 @@ acd query run --spec <file|-> --output json
   "kind": "snapshot",
   "source": "sales",
   "filters": {
-    "startDatePT": "2026-03-01",
-    "endDatePT": "2026-03-30"
+    "rangePreset": "last-week",
+    "territory": "US"
   }
 }
 ```
@@ -47,12 +49,14 @@ acd query run --spec <file|-> --output json
 ```json
 {
   "kind": "reviews.summary",
-  "filters": {}
+  "filters": {
+    "rangePreset": "last-week"
+  }
 }
 ```
 
 ## 注意
 
-- `query` 命令默认只读本地 cache
-- `sync` 和 `reviews respond` 需要 ASC 凭据
-- 如果 cache 为空，`health` 会返回 low confidence 和缺失项
+- `query` 和 `reviews` 默认会在有凭据时自动补齐所需数据
+- `--offline` 才是纯本地读取
+- `reviews respond` 一直需要 ASC 凭据
