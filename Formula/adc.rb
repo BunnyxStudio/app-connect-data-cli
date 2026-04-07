@@ -23,6 +23,7 @@ class Adc < Formula
   end
 
   test do
+    ENV["HOME"] = testpath
     output = shell_output("#{bin}/adc capabilities list --output json")
     assert_match "\"sales\"", output
     assert_match "\"analytics\"", output
