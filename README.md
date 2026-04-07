@@ -1,5 +1,7 @@
 # app-connect-data-cli
 
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
+
 `app-connect-data-cli` is a command-line tool for querying App Store Connect sales, finance, subscription, and review data over explicit time ranges.
 
 Ask for a single day, a custom date window, or a preset such as `last-week`, and the CLI fetches the required data on demand. Raw files are cached locally, but caching stays in the background unless you want to control it.
@@ -241,3 +243,11 @@ Licensed under the Apache License, Version 2.0.
 
 Forking, modification, redistribution, and commercial use are allowed.
 Redistributed or derivative versions must retain the license and the original project attribution in [NOTICE](./NOTICE).
+
+## Attribution requirement
+
+If you fork this project, ship a modified build, or use it as part of a commercial product, you must keep:
+
+- the Apache 2.0 license text
+- the original project attribution in [NOTICE](./NOTICE)
+- clear change notices for files you modify, as required by Apache 2.0

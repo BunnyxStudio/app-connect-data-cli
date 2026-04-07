@@ -1,14 +1,14 @@
 # Contributing
 
-感谢你愿意参与 `app-connect-data-cli`。
+Thanks for contributing to `app-connect-data-cli`.
 
-## 开发环境
+## Development environment
 
 - macOS
 - Xcode 26+
 - Swift 6.2+
 
-## 本地开发
+## Local development
 
 ```bash
 swift build
@@ -16,48 +16,48 @@ swift test
 ./.build/debug/app-connect-data-cli --help
 ```
 
-## 提 PR 前
+## Before opening a pull request
 
-请至少完成这几步：
+Please run at least:
 
 ```bash
 swift build
 swift test
 ```
 
-如果你改了 CLI 行为，也请同步更新：
+If you change CLI behavior, also update:
 
 - `README.md`
 - `docs/`
 - `examples/queries/`
 
-## 代码范围
+## Project scope
 
-这个仓库只接收这些方向的改动：
+This repository accepts contributions in these areas:
 
-- App Store Connect 数据下载
-- 报表解析
-- 文件缓存
-- 聚合与查询
-- 评论同步与摘要
-- CLI 输出与 agent 入口
+- App Store Connect data fetching
+- Report parsing
+- File-based caching
+- Aggregation and query flows
+- Review sync and summaries
+- CLI output and agent-facing interfaces
 
-默认不接收这些方向：
+This repository is not intended for:
 
 - iOS app UI
-- Widget
-- StoreKit 付费逻辑
-- App Store 发布自动化
+- Widgets
+- StoreKit monetization logic
+- App Store release automation
 
-## Issue 标签
+## Issue labels
 
-建议每个 issue 都有三类标签：
+Each issue should use these label groups when possible:
 
 - `type/*`
 - `priority/*`
 - `difficulty/*`
 
-推荐值：
+Common values:
 
 - `type/bug`
 - `type/feature`
@@ -67,13 +67,19 @@ swift test
 - `difficulty/medium`
 - `difficulty/hard`
 
-## 安全要求
+## Contribution license
 
-不要提交：
+By submitting a contribution, you agree that your contribution will be licensed under the Apache License, Version 2.0, together with the rest of the project.
 
-- `.p8`
-- 私钥
-- 完整 bearer token
-- 含敏感字段的原始日志
+If your change adds or modifies attribution material, keep the existing project attribution in `NOTICE`.
 
-如果你需要复现 auth 问题，请先脱敏。
+## Security requirements
+
+Do not commit:
+
+- `.p8` files
+- private keys
+- full bearer tokens
+- raw logs with sensitive fields
+
+If you need to reproduce an auth issue, redact secrets first.
