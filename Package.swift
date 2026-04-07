@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "app-connect-data-cli",
+    name: "App Store Connect Data CLI",
     platforms: [
         .macOS(.v14)
     ],

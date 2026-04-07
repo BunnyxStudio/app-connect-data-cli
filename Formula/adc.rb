@@ -1,5 +1,5 @@
 class Adc < Formula
-  desc "Read-only CLI for querying App Store Connect reporting data"
+  desc "App Store Connect Data CLI for official Apple reporting data"
   homepage "https://github.com/BunnyxStudio/app-connect-data-cli"
   url "https://github.com/BunnyxStudio/app-connect-data-cli/archive/refs/tags/v0.1.0.tar.gz"
   version "0.1.0"

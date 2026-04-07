@@ -295,7 +295,7 @@ private func executeBriefSummary(
 struct ACDCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "adc",
-        abstract: "Direct App Store Connect data queries for official Apple reporting APIs.",
+        abstract: "App Store Connect Data CLI for official Apple reporting APIs.",
         discussion: """
         Start here:
           adc overview daily

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for contributing to `app-connect-data-cli`.
+Thanks for contributing to `App Store Connect Data CLI`.
 
 ## Development environment
 
@@ -13,7 +13,7 @@ Thanks for contributing to `app-connect-data-cli`.
 ```bash
 swift build
 swift test
-./.build/debug/app-connect-data-cli --help
+./.build/debug/adc --help
 ```
 
 ## Before opening a pull request

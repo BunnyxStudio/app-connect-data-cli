@@ -1,12 +1,13 @@
-# app-connect-data-cli
+# App Store Connect Data CLI
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-`app-connect-data-cli` is a read-only CLI for querying App Store Connect sales, finance, customer reviews, and Apple Analytics reports over explicit time windows.
+`App Store Connect Data CLI` is a read-only CLI for querying App Store Connect sales, finance, customer reviews, and Apple Analytics reports over explicit time windows.
 
 It is built for operators, indie developers, product teams, and agents that need structured Apple reporting data without building a separate backend.
 
 The command name is `adc`.
+The GitHub repository slug stays `app-connect-data-cli`.
 
 ## What it does
 
@@ -42,7 +43,7 @@ Use `sales`, `reviews`, `finance`, `analytics`, or `query run --spec` if you wan
 
 ## Privacy and security
 
-This project does not run a project-owned server and does not upload your `.p8` key to any app-connect-data-cli backend.
+This project does not run a project-owned server and does not upload your `.p8` key to any App Store Connect Data CLI service.
 
 - Your `.p8` stays on your machine
 - The CLI reads the key from a local path and keeps it in memory only for request signing
