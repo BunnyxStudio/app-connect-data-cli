@@ -23,7 +23,7 @@ class Adc < Formula
   end
 
   test do
-    ENV["HOME"] = testpath
+    (testpath/".app-connect-data-cli").mkpath
     output = shell_output("#{bin}/adc capabilities list --output json")
     assert_match "\"sales\"", output
     assert_match "\"analytics\"", output
