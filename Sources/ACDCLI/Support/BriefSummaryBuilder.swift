@@ -17,10 +17,12 @@ import ACDAnalytics
 import ACDCore
 
 struct BriefSummaryReport: Codable, Sendable {
+    var period: String
     var title: String
     var currentLabel: String
     var compareLabel: String
     var reportingCurrency: String
+    var timeBasis: String
     var sections: [BriefSummarySection]
     var warnings: [QueryWarning]
 }
@@ -31,41 +33,28 @@ struct BriefSummarySection: Codable, Sendable {
     var table: TableModel
 }
 
-enum BriefSummaryPeriod: Equatable {
+enum BriefSummaryPeriod: String, Equatable {
     case daily
     case weekly
     case monthly
+    case last7d = "last-7d"
+    case last30d = "last-30d"
+    case lastMonth = "last-month"
 
     var title: String {
         switch self {
         case .daily:
-            return "Last Day Summary"
+            return "Daily Summary"
         case .weekly:
-            return "Last Week Summary"
+            return "Week to Date Summary"
         case .monthly:
+            return "Month to Date Summary"
+        case .last7d:
+            return "Last 7 Days Summary"
+        case .last30d:
+            return "Last 30 Days Summary"
+        case .lastMonth:
             return "Last Month Summary"
-        }
-    }
-
-    var currentSelection: QueryTimeSelection {
-        switch self {
-        case .daily:
-            return QueryTimeSelection(rangePreset: PTDateRangePreset.lastDay.rawValue)
-        case .weekly:
-            return QueryTimeSelection(rangePreset: PTDateRangePreset.lastWeek.rawValue)
-        case .monthly:
-            return QueryTimeSelection(rangePreset: PTDateRangePreset.lastMonth.rawValue)
-        }
-    }
-
-    var currentWindow: PTDateWindow {
-        switch self {
-        case .daily:
-            return PTDateRangePreset.lastDay.resolve()
-        case .weekly:
-            return PTDateRangePreset.lastWeek.resolve()
-        case .monthly:
-            return PTDateRangePreset.lastMonth.resolve()
         }
     }
 
@@ -77,24 +66,60 @@ enum BriefSummaryPeriod: Equatable {
             return .weekOverWeek
         case .monthly:
             return .monthOverMonth
+        case .last7d, .last30d:
+            return .previousPeriod
+        case .lastMonth:
+            return .monthOverMonth
         }
     }
 
-    var previousWindow: PTDateWindow {
-        let calendar = Calendar.pacific
+    var includesFinance: Bool {
+        self == .lastMonth
+    }
+
+    func currentWindow(reference: Date = Date()) -> PTDateWindow {
         switch self {
         case .daily:
-            let current = currentWindow
+            return PTDateRangePreset.lastDay.resolve(reference: reference)
+        case .weekly:
+            return PTDateRangePreset.thisWeek.resolve(reference: reference)
+        case .monthly:
+            return PTDateRangePreset.thisMonth.resolve(reference: reference)
+        case .last7d:
+            return PTDateRangePreset.last7d.resolve(reference: reference)
+        case .last30d:
+            return PTDateRangePreset.last30d.resolve(reference: reference)
+        case .lastMonth:
+            return PTDateRangePreset.lastMonth.resolve(reference: reference)
+        }
+    }
+
+    func previousWindow(reference: Date = Date()) -> PTDateWindow {
+        let calendar = Calendar.pacific
+        let current = currentWindow(reference: reference)
+        switch self {
+        case .daily:
             let start = calendar.date(byAdding: .day, value: -1, to: current.startDate) ?? current.startDate
             let end = calendar.date(byAdding: .day, value: -1, to: current.endDate) ?? current.endDate
             return PTDateWindow(startDate: start, endDate: end)
         case .weekly:
-            let current = currentWindow
             let start = calendar.date(byAdding: .day, value: -7, to: current.startDate) ?? current.startDate
             let end = calendar.date(byAdding: .day, value: -7, to: current.endDate) ?? current.endDate
             return PTDateWindow(startDate: start, endDate: end)
         case .monthly:
-            let current = currentWindow
+            let previousMonthEnd = calendar.date(byAdding: .day, value: -1, to: current.startDate) ?? current.startDate
+            let previousMonth = calendar.dateInterval(of: .month, for: previousMonthEnd)
+            let start = previousMonth?.start ?? previousMonthEnd
+            let fullMonthEnd = calendar.date(byAdding: .day, value: -1, to: previousMonth?.end ?? current.startDate) ?? previousMonthEnd
+            let dayCount = max(1, (calendar.dateComponents([.day], from: current.startDate, to: current.endDate).day ?? 0) + 1)
+            let comparableEnd = calendar.date(byAdding: .day, value: dayCount - 1, to: start) ?? fullMonthEnd
+            return PTDateWindow(startDate: start, endDate: min(fullMonthEnd, comparableEnd))
+        case .last7d, .last30d:
+            let dayCount = max(1, (calendar.dateComponents([.day], from: current.startDate, to: current.endDate).day ?? 0) + 1)
+            let end = calendar.date(byAdding: .day, value: -1, to: current.startDate) ?? current.startDate
+            let start = calendar.date(byAdding: .day, value: -(dayCount - 1), to: end) ?? end
+            return PTDateWindow(startDate: start, endDate: end)
+        case .lastMonth:
             let previousMonthEnd = calendar.date(byAdding: .day, value: -1, to: current.startDate) ?? current.startDate
             let previousMonth = calendar.dateInterval(of: .month, for: previousMonthEnd)
             let start = previousMonth?.start ?? previousMonthEnd
@@ -103,34 +128,73 @@ enum BriefSummaryPeriod: Equatable {
         }
     }
 
-    var previousSelection: QueryTimeSelection {
-        let previous = previousWindow
+    func currentSelection(reference: Date = Date()) -> QueryTimeSelection {
+        let current = currentWindow(reference: reference)
+        return QueryTimeSelection(startDatePT: current.startDatePT, endDatePT: current.endDatePT)
+    }
+
+    func previousSelection(reference: Date = Date()) -> QueryTimeSelection {
+        let previous = previousWindow(reference: reference)
         return QueryTimeSelection(startDatePT: previous.startDatePT, endDatePT: previous.endDatePT)
     }
 
-    var includesFinance: Bool {
-        self == .monthly
-    }
-
-    var currentDisplayLabel: String {
+    func currentDisplayLabel(reference: Date = Date()) -> String {
+        let currentWindow = currentWindow(reference: reference)
         switch self {
         case .daily:
-            return "last-day (\(currentWindow.startDatePT))"
+            return "latest complete day (\(currentWindow.startDatePT) PT)"
         case .weekly:
-            return currentWindow.startDatePT + " to " + currentWindow.endDatePT
+            return "this week to date (\(currentWindow.startDatePT) to \(currentWindow.endDatePT) PT)"
         case .monthly:
-            return currentWindow.startDatePT + " to " + currentWindow.endDatePT
+            return "this month to date (\(currentWindow.startDatePT) to \(currentWindow.endDatePT) PT)"
+        case .last7d:
+            return "last 7 complete days (\(currentWindow.startDatePT) to \(currentWindow.endDatePT) PT)"
+        case .last30d:
+            return "last 30 complete days (\(currentWindow.startDatePT) to \(currentWindow.endDatePT) PT)"
+        case .lastMonth:
+            return "last full month (\(currentWindow.startDatePT) to \(currentWindow.endDatePT) PT)"
         }
     }
 
-    var compareDisplayLabel: String {
+    func compareDisplayLabel(reference: Date = Date()) -> String {
+        let previousWindow = previousWindow(reference: reference)
         switch self {
         case .daily:
-            return "previous-day (\(previousWindow.startDatePT))"
+            return "previous complete day (\(previousWindow.startDatePT) PT)"
         case .weekly:
-            return previousWindow.startDatePT + " to " + previousWindow.endDatePT
+            return "previous week same progress (\(previousWindow.startDatePT) to \(previousWindow.endDatePT) PT)"
         case .monthly:
-            return previousWindow.startDatePT + " to " + previousWindow.endDatePT
+            return "previous month same progress (\(previousWindow.startDatePT) to \(previousWindow.endDatePT) PT)"
+        case .last7d:
+            return "previous 7 days (\(previousWindow.startDatePT) to \(previousWindow.endDatePT) PT)"
+        case .last30d:
+            return "previous 30 days (\(previousWindow.startDatePT) to \(previousWindow.endDatePT) PT)"
+        case .lastMonth:
+            return "month before last (\(previousWindow.startDatePT) to \(previousWindow.endDatePT) PT)"
+        }
+    }
+}
+
+private struct ResolvedBriefSummaryPeriod {
+    var period: BriefSummaryPeriod
+    var compareMode: QueryCompareMode
+    var currentSelection: QueryTimeSelection
+    var previousSelection: QueryTimeSelection
+    var currentWindow: PTDateWindow
+    var previousWindow: PTDateWindow
+    var title: String
+    var currentDisplayLabel: String
+    var compareDisplayLabel: String
+    var includesFinance: Bool
+}
+
+private enum BriefSummaryBuilderError: LocalizedError {
+    case invalidSpec(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSpec(let message):
+            return message
         }
     }
 }
@@ -141,6 +205,26 @@ struct BriefSummaryBuilder {
     let refresh: Bool
 
     func build(period: BriefSummaryPeriod) async throws -> BriefSummaryReport {
+        let resolved = resolve(period: period)
+        return try await build(resolved: resolved)
+    }
+
+    func build(spec: DataQuerySpec) async throws -> BriefSummaryReport {
+        guard spec.dataset == .brief, spec.operation == .brief else {
+            throw BriefSummaryBuilderError.invalidSpec("Brief queries require dataset=brief and operation=brief.")
+        }
+        guard spec.compare == nil, spec.compareTime == nil else {
+            throw BriefSummaryBuilderError.invalidSpec("Brief queries do not accept compare or compareTime. Use a brief range preset instead.")
+        }
+        guard spec.filters == QueryFilterSet(), spec.groupBy.isEmpty, spec.limit == nil else {
+            throw BriefSummaryBuilderError.invalidSpec("Brief queries do not accept filters, groupBy, or limit.")
+        }
+
+        let period = try resolve(spec: spec)
+        return try await build(period: period)
+    }
+
+    private func build(resolved period: ResolvedBriefSummaryPeriod) async throws -> BriefSummaryReport {
         try await prefetch(period: period)
 
         let salesOverview = try await executeQuery(
@@ -448,17 +532,16 @@ struct BriefSummaryBuilder {
             financeByCurrency
         ]
         let warnings = deduplicatedWarnings(
-            warningSources.compactMap { $0 }.flatMap(\.warnings)
+            warningSources.compactMap { $0 }.flatMap { $0.warnings }
         )
 
-        let currentLabel = period.currentDisplayLabel
-        let compareLabel = period.compareDisplayLabel
-
         return BriefSummaryReport(
+            period: period.period.rawValue,
             title: period.title,
-            currentLabel: currentLabel,
-            compareLabel: compareLabel,
+            currentLabel: period.currentDisplayLabel,
+            compareLabel: period.compareDisplayLabel,
             reportingCurrency: reportingCurrency,
+            timeBasis: timeBasisDescription(),
             sections: sections.filter { $0.table.rows.isEmpty == false },
             warnings: warnings
         )
@@ -468,7 +551,72 @@ struct BriefSummaryBuilder {
         (runtime.config.reportingCurrency ?? "USD").normalizedCurrencyCode
     }
 
-    private func prefetch(period: BriefSummaryPeriod) async throws {
+    private var displayTimeZone: TimeZone {
+        if let identifier = runtime.config.displayTimeZone,
+           let timeZone = TimeZone(identifier: identifier) {
+            return timeZone
+        }
+        return .autoupdatingCurrent
+    }
+
+    private func resolve(period: BriefSummaryPeriod, reference: Date = Date()) -> ResolvedBriefSummaryPeriod {
+        ResolvedBriefSummaryPeriod(
+            period: period,
+            compareMode: period.compareMode,
+            currentSelection: period.currentSelection(reference: reference),
+            previousSelection: period.previousSelection(reference: reference),
+            currentWindow: period.currentWindow(reference: reference),
+            previousWindow: period.previousWindow(reference: reference),
+            title: period.title,
+            currentDisplayLabel: period.currentDisplayLabel(reference: reference),
+            compareDisplayLabel: period.compareDisplayLabel(reference: reference),
+            includesFinance: period.includesFinance
+        )
+    }
+
+    private func resolve(spec: DataQuerySpec) throws -> BriefSummaryPeriod {
+        guard let rangePreset = spec.time.rangePreset,
+              let preset = PTDateRangePreset(userInput: rangePreset)
+        else {
+            throw BriefSummaryBuilderError.invalidSpec(
+                "Brief queries require time.rangePreset. Supported values: last-day, this-week, this-month, last-7d, last-30d, last-month."
+            )
+        }
+
+        switch preset {
+        case .lastDay:
+            return .daily
+        case .thisWeek:
+            return .weekly
+        case .thisMonth:
+            return .monthly
+        case .last7d:
+            return .last7d
+        case .last30d:
+            return .last30d
+        case .lastMonth:
+            return .lastMonth
+        default:
+            throw BriefSummaryBuilderError.invalidSpec(
+                "Unsupported brief preset \(preset.rawValue). Use last-day, this-week, this-month, last-7d, last-30d, or last-month."
+            )
+        }
+    }
+
+    private func timeBasisDescription(reference: Date = Date()) -> String {
+        let availability = PTReportAvailability(reference: reference)
+        return "Apple business dates use PT. Next daily rollover in \(displayTimeZone.identifier): \(formatLocalDateTime(availability.nextAvailabilityDate))."
+    }
+
+    private func formatLocalDateTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = displayTimeZone
+        formatter.dateFormat = "yyyy-MM-dd HH:mm zzz"
+        return formatter.string(from: date)
+    }
+
+    private func prefetch(period: ResolvedBriefSummaryPeriod) async throws {
         guard offline == false, let syncService = runtime.syncService else { return }
 
         let unionWindow = PTDateWindow(
@@ -502,7 +650,7 @@ struct BriefSummaryBuilder {
         )
     }
 
-    private func loadFinanceOverview(period: BriefSummaryPeriod) async throws -> QueryResult? {
+    private func loadFinanceOverview(period: ResolvedBriefSummaryPeriod) async throws -> QueryResult? {
         guard period.includesFinance else { return nil }
         return try await executeQuery(
             dataset: .finance,
@@ -514,7 +662,7 @@ struct BriefSummaryBuilder {
         )
     }
 
-    private func loadFinanceBreakdown(period: BriefSummaryPeriod, groupBy: QueryGroupBy) async throws -> QueryResult? {
+    private func loadFinanceBreakdown(period: ResolvedBriefSummaryPeriod, groupBy: QueryGroupBy) async throws -> QueryResult? {
         guard period.includesFinance else { return nil }
         return try await executeQuery(
             dataset: .finance,
@@ -526,7 +674,7 @@ struct BriefSummaryBuilder {
         )
     }
 
-    private func loadFinanceRecords(period: BriefSummaryPeriod) async throws -> [QueryRecord] {
+    private func loadFinanceRecords(period: ResolvedBriefSummaryPeriod) async throws -> [QueryRecord] {
         guard period.includesFinance else { return [] }
         return try await executeQuery(
             dataset: .finance,
@@ -573,7 +721,7 @@ struct BriefSummaryBuilder {
     }
 
     private func makeOverviewSection(
-        period: BriefSummaryPeriod,
+        period: ResolvedBriefSummaryPeriod,
         salesOverview: QueryResult,
         reviewsOverview: QueryResult,
         financeOverview: QueryResult?,
@@ -814,7 +962,7 @@ struct BriefSummaryBuilder {
     }
 
     private func makeDataHealthSection(
-        period: BriefSummaryPeriod,
+        period: ResolvedBriefSummaryPeriod,
         currentSales: [QueryRecord],
         currentSubscriptions: [QueryRecord],
         currentReviews: [QueryRecord],
@@ -823,8 +971,10 @@ struct BriefSummaryBuilder {
     ) -> BriefSummarySection {
         let rows = [
             ["reportingCurrency", reportingCurrency],
+            ["displayTimeZone", displayTimeZone.identifier],
             ["currentRange", period.currentWindow.startDatePT + " to " + period.currentWindow.endDatePT],
             ["compareRange", period.previousWindow.startDatePT + " to " + period.previousWindow.endDatePT],
+            ["nextRolloverLocal", formatLocalDateTime(PTReportAvailability().nextAvailabilityDate)],
             ["salesAsOf", salesAsOfValue(period: period, currentSales: currentSales)],
             ["subscriptionAsOf", maxDateString(currentSubscriptions)],
             ["reviewsAsOf", maxDateString(currentReviews)],
@@ -875,7 +1025,7 @@ struct BriefSummaryBuilder {
         }
     }
 
-    private func financeHealthRows(period: BriefSummaryPeriod, currentFinance: [QueryRecord]) -> [[String]] {
+    private func financeHealthRows(period: ResolvedBriefSummaryPeriod, currentFinance: [QueryRecord]) -> [[String]] {
         guard period.includesFinance else { return [] }
         return [
             ["financeFiscalMonth", period.currentWindow.endDate.fiscalMonthString],
@@ -883,15 +1033,15 @@ struct BriefSummaryBuilder {
         ]
     }
 
-    private func salesAsOfValue(period: BriefSummaryPeriod, currentSales: [QueryRecord]) -> String {
-        if period == .monthly, currentSales.isEmpty == false {
+    private func salesAsOfValue(period: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> String {
+        if period.period == .lastMonth, currentSales.isEmpty == false {
             return period.currentWindow.endDatePT
         }
         return maxDateString(currentSales)
     }
 
-    private func salesCoverageDays(period: BriefSummaryPeriod, currentSales: [QueryRecord]) -> Int {
-        if period == .monthly, currentSales.isEmpty == false {
+    private func salesCoverageDays(period: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> Int {
+        if period.period == .lastMonth, currentSales.isEmpty == false {
             let days = Calendar.pacific.dateComponents([.day], from: period.currentWindow.startDate, to: period.currentWindow.endDate).day ?? 0
             return days + 1
         }

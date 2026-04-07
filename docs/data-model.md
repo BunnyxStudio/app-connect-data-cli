@@ -1,15 +1,15 @@
 # Data Model
 
-All public query commands map to one shared model.
+Most public query commands share one request model.
 
-## Request
+## Shared request model
 
 ```json
 {
   "dataset": "sales",
   "operation": "aggregate",
   "time": {
-    "rangePreset": "last-week"
+    "rangePreset": "last-7d"
   },
   "compare": "previous-period",
   "compareTime": null,
@@ -33,66 +33,16 @@ All public query commands map to one shared model.
 - `groupBy`
 - `limit`
 
-## Datasets
+## Shared response model
+
+These datasets return `QueryResult`:
 
 - `sales`
 - `reviews`
 - `finance`
 - `analytics`
-- `brief`
 
-## Operations
-
-- `records`
-- `aggregate`
-- `compare`
-- `brief`
-
-## Time fields
-
-- `datePT`
-- `startDatePT`
-- `endDatePT`
-- `rangePreset`
-- `year`
-- `fiscalMonth`
-- `fiscalYear`
-
-## Filters
-
-- `app`
-- `version`
-- `territory`
-- `currency`
-- `device`
-- `sku`
-- `subscription`
-- `platform`
-- `sourceReport`
-- `rating`
-- `responseState`
-
-## Grouping
-
-- `day`
-- `week`
-- `month`
-- `fiscalMonth`
-- `app`
-- `version`
-- `territory`
-- `device`
-- `sku`
-- `rating`
-- `responseState`
-- `reportType`
-- `platform`
-- `sourceReport`
-- `subscription`
-
-## Response
-
-Every result returns:
+`QueryResult` contains:
 
 - `dataset`
 - `operation`
@@ -103,3 +53,37 @@ Every result returns:
 - `comparison`
 - `warnings`
 - `tableModel`
+
+## Brief response model
+
+`brief` is intentionally different.
+
+It returns `BriefSummaryReport` instead of `QueryResult`.
+
+That model contains:
+
+- `period`
+- `title`
+- `currentLabel`
+- `compareLabel`
+- `reportingCurrency`
+- `timeBasis`
+- `sections`
+- `warnings`
+
+Each `section` contains:
+
+- `title`
+- `note`
+- `table`
+
+## Why brief is separate
+
+`brief` is designed to be a ready-made operating summary.
+
+It is not a low-level records or aggregate response.
+
+That is why:
+
+- humans can read it directly in `table` or `markdown`
+- agents can consume the same structure through `query run --spec`

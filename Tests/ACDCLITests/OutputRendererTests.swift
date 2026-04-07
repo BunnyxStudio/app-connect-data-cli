@@ -21,24 +21,24 @@ final class OutputRendererTests: XCTestCase {
     func testTableRenderUsesQueryResultTableModel() throws {
         let rendered = try OutputRenderer.render(
             QueryResult(
-                dataset: .brief,
-                operation: .brief,
+                dataset: .sales,
+                operation: .aggregate,
                 time: QueryTimeEnvelope(label: "last week", startDatePT: "2026-02-10", endDatePT: "2026-02-16"),
                 filters: QueryFilterSet(),
                 source: ["summary-sales"],
-                data: QueryResultData(brief: [
-                    BriefRow(metric: "Sales proceeds", current: "$120.00", compare: "$100.00", change: "20.00%", note: "up")
+                data: QueryResultData(aggregates: [
+                    QueryAggregateRow(group: [:], metrics: ["proceeds": 120])
                 ]),
                 tableModel: TableModel(
-                    columns: ["metric", "current", "compare", "change", "note"],
-                    rows: [["Sales proceeds", "$120.00", "$100.00", "20.00%", "up"]]
+                    columns: ["proceeds"],
+                    rows: [["120.00"]]
                 )
             ),
             format: .table
         )
 
-        XCTAssertTrue(rendered.contains("metric"))
-        XCTAssertTrue(rendered.contains("Sales proceeds"))
+        XCTAssertTrue(rendered.contains("proceeds"))
+        XCTAssertTrue(rendered.contains("120.00"))
     }
 
     func testMarkdownRenderForCapabilities() throws {
@@ -106,10 +106,12 @@ final class OutputRendererTests: XCTestCase {
     func testTableRenderForBriefSummaryUsesSeparateTables() throws {
         let rendered = try OutputRenderer.render(
             BriefSummaryReport(
-                title: "Last Week Summary",
-                currentLabel: "2026-04-01 to 2026-04-07",
-                compareLabel: "2026-03-25 to 2026-03-31",
+                period: "weekly",
+                title: "Week to Date Summary",
+                currentLabel: "this week to date (2026-04-01 to 2026-04-07 PT)",
+                compareLabel: "previous week same progress (2026-03-25 to 2026-03-31 PT)",
                 reportingCurrency: "CNY",
+                timeBasis: "Apple business dates use PT. Next daily rollover in Asia/Shanghai: 2026-04-08 19:00 CST.",
                 sections: [
                     BriefSummarySection(
                         title: "Overview",
@@ -135,9 +137,10 @@ final class OutputRendererTests: XCTestCase {
             format: .table
         )
 
-        XCTAssertTrue(rendered.contains("Last Week Summary"))
+        XCTAssertTrue(rendered.contains("Week to Date Summary"))
         XCTAssertTrue(rendered.contains("==== Overview ===="))
         XCTAssertTrue(rendered.contains("==== Top Products ===="))
+        XCTAssertTrue(rendered.contains("Time basis: Apple business dates use PT."))
         XCTAssertTrue(rendered.contains("Warning: Monetary metrics are normalized to CNY."))
         XCTAssertTrue(rendered.contains("==== Overview ====\n\nImportant metrics.\n\nmetric"))
     }

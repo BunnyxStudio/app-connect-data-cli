@@ -81,10 +81,36 @@ public enum PTDateWindowError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public struct PTReportAvailability: Equatable, Sendable {
+    public var latestCompleteDate: Date
+    public var nextAvailabilityDate: Date
+
+    public init(reference: Date = Date(), publishHourPT: Int = 4) {
+        let calendar = Calendar.pacific
+        let pacificToday = calendar.startOfDay(for: reference)
+        let todayAvailability = calendar.date(
+            bySettingHour: publishHourPT,
+            minute: 0,
+            second: 0,
+            of: pacificToday
+        ) ?? pacificToday
+
+        if reference >= todayAvailability {
+            self.latestCompleteDate = calendar.date(byAdding: .day, value: -1, to: pacificToday) ?? pacificToday
+            self.nextAvailabilityDate = calendar.date(byAdding: .day, value: 1, to: todayAvailability) ?? todayAvailability
+        } else {
+            self.latestCompleteDate = calendar.date(byAdding: .day, value: -2, to: pacificToday) ?? pacificToday
+            self.nextAvailabilityDate = todayAvailability
+        }
+    }
+}
+
 public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
     case lastDay = "last-day"
+    case thisWeek = "this-week"
     case lastWeek = "last-week"
     case last7d = "last-7d"
+    case thisMonth = "this-month"
     case last30d = "last-30d"
     case lastMonth = "last-month"
     case yearToDate = "year-to-date"
@@ -98,12 +124,16 @@ public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
             .replacingOccurrences(of: "_", with: "-")
             .replacingOccurrences(of: " ", with: "-")
         switch normalized {
-        case "last-day", "lastday", "yesterday":
+        case "last-day", "lastday", "yesterday", "daily", "latest-complete-day", "latest-day":
             self = .lastDay
+        case "this-week", "thisweek", "weekly", "week-to-date", "week2date", "wtd":
+            self = .thisWeek
         case "last-week", "lastweek":
             self = .lastWeek
         case "last-7d", "7d", "last7d":
             self = .last7d
+        case "this-month", "thismonth", "monthly", "month-to-date", "month2date", "mtd":
+            self = .thisMonth
         case "last-30d", "30d", "last30d":
             self = .last30d
         case "last-month", "lastmonth":
@@ -121,37 +151,43 @@ public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
 
     public func resolve(reference: Date = Date()) -> PTDateWindow {
         let calendar = Calendar.pacific
-        let today = calendar.startOfDay(for: reference)
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-        let currentWeek = calendar.dateInterval(of: .weekOfYear, for: today)
-        let currentMonth = calendar.dateInterval(of: .month, for: today)
+        let availability = PTReportAvailability(reference: reference)
+        let anchor = calendar.startOfDay(for: availability.latestCompleteDate)
+        let currentWeek = calendar.dateInterval(of: .weekOfYear, for: anchor)
+        let currentMonth = calendar.dateInterval(of: .month, for: anchor)
 
         switch self {
         case .lastDay:
-            return PTDateWindow(startDate: yesterday, endDate: yesterday)
+            return PTDateWindow(startDate: anchor, endDate: anchor)
+        case .thisWeek:
+            let start = currentWeek?.start ?? anchor
+            return PTDateWindow(startDate: start, endDate: anchor)
         case .lastWeek, .previousWeek:
-            let currentWeekStart = currentWeek?.start ?? today
-            let previousWeekEnd = calendar.date(byAdding: .day, value: -1, to: currentWeekStart) ?? yesterday
+            let currentWeekStart = currentWeek?.start ?? anchor
+            let previousWeekEnd = calendar.date(byAdding: .day, value: -1, to: currentWeekStart) ?? anchor
             let previousWeekStart = calendar.dateInterval(of: .weekOfYear, for: previousWeekEnd)?.start ?? previousWeekEnd
             return PTDateWindow(startDate: previousWeekStart, endDate: previousWeekEnd)
         case .last7d:
-            let end = yesterday
+            let end = anchor
             let start = calendar.date(byAdding: .day, value: -6, to: end) ?? end
             return PTDateWindow(startDate: start, endDate: end)
+        case .thisMonth:
+            let start = currentMonth?.start ?? anchor
+            return PTDateWindow(startDate: start, endDate: anchor)
         case .last30d:
-            let end = yesterday
+            let end = anchor
             let start = calendar.date(byAdding: .day, value: -29, to: end) ?? end
             return PTDateWindow(startDate: start, endDate: end)
         case .lastMonth, .previousMonth:
-            let currentMonthStart = currentMonth?.start ?? today
-            let lastMonthReference = calendar.date(byAdding: .day, value: -1, to: currentMonthStart) ?? today
+            let currentMonthStart = currentMonth?.start ?? anchor
+            let lastMonthReference = calendar.date(byAdding: .day, value: -1, to: currentMonthStart) ?? anchor
             let monthInterval = calendar.dateInterval(of: .month, for: lastMonthReference)
             let start = monthInterval?.start ?? lastMonthReference
             let end = calendar.date(byAdding: .day, value: -1, to: monthInterval?.end ?? currentMonthStart) ?? lastMonthReference
             return PTDateWindow(startDate: start, endDate: end)
         case .yearToDate:
-            let start = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
-            let end = max(start, yesterday)
+            let start = calendar.date(from: calendar.dateComponents([.year], from: anchor)) ?? anchor
+            let end = max(start, anchor)
             return PTDateWindow(startDate: start, endDate: end)
         }
     }
@@ -170,6 +206,18 @@ public struct PTDateWindow: Codable, Equatable, Sendable {
 
     public var startDatePT: String { startDate.ptDateString }
     public var endDatePT: String { endDate.ptDateString }
+}
+
+public func latestCompletePTDate(reference: Date = Date()) -> Date {
+    PTReportAvailability(reference: reference).latestCompleteDate
+}
+
+public func currentPTWeekToDateWindow(reference: Date = Date()) -> PTDateWindow {
+    PTDateRangePreset.thisWeek.resolve(reference: reference)
+}
+
+public func currentPTMonthToDateWindow(reference: Date = Date()) -> PTDateWindow {
+    PTDateRangePreset.thisMonth.resolve(reference: reference)
 }
 
 public func resolvePTDateWindow(

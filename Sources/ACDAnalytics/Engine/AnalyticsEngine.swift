@@ -148,7 +148,7 @@ public final class AnalyticsEngine {
         case .analytics:
             return try await executeAnalytics(spec: spec, offline: offline, refresh: refresh)
         case .brief:
-            return try await executeBrief(spec: spec, offline: offline, refresh: refresh)
+            throw AnalyticsEngineError.invalidQuery("Brief summaries are handled by adc brief, adc overview, or adc query run --spec.")
         }
     }
 
@@ -160,7 +160,7 @@ public final class AnalyticsEngine {
         let selection = try resolveSelection(dataset: .sales, time: spec.time, defaultPreset: .last7d)
         let requestedReports = normalizedSalesFamilies(filters: spec.filters)
         if offline == false, let syncService {
-            try await syncService.syncSalesReports(window: selection.window, reportFamilies: requestedReports, force: refresh)
+            _ = try await syncService.syncSalesReports(window: selection.window, reportFamilies: requestedReports, force: refresh)
         }
         let records = try loadSalesRecords(window: selection.window, filters: spec.filters, requestedReports: requestedReports)
         return try await buildResult(
@@ -209,7 +209,7 @@ public final class AnalyticsEngine {
     ) async throws -> QueryResult {
         let selection = try resolveSelection(dataset: .finance, time: spec.time, defaultPreset: .lastMonth)
         if offline == false, let syncService {
-            try await syncService.syncFinance(
+            _ = try await syncService.syncFinance(
                 fiscalMonths: selection.fiscalMonths,
                 regionCodes: ["ZZ", "Z1"],
                 reportTypes: [.financial, .financeDetail],
@@ -256,131 +256,6 @@ public final class AnalyticsEngine {
                 )
             ],
             allowFXNetwork: false
-        )
-    }
-
-    private func executeBrief(
-        spec: DataQuerySpec,
-        offline: Bool,
-        refresh: Bool
-    ) async throws -> QueryResult {
-        guard spec.operation == .brief else {
-            throw AnalyticsEngineError.invalidQuery("The brief dataset only supports the brief operation.")
-        }
-
-        let defaultPreset: PTDateRangePreset = spec.time.fiscalMonth == nil && spec.time.fiscalYear == nil
-            ? .lastWeek
-            : .lastMonth
-        let selection = try resolveSelection(dataset: .brief, time: spec.time, defaultPreset: defaultPreset)
-        let compareMode: QueryCompareMode = spec.compare ?? (selection.window.startDate.fiscalMonthString == selection.window.endDate.fiscalMonthString ? .monthOverMonth : .weekOverWeek)
-        let compareSelection = try resolveComparisonSelection(dataset: .sales, current: selection, mode: compareMode, custom: spec.compareTime)
-
-        let salesSpec = DataQuerySpec(
-            dataset: .sales,
-            operation: .aggregate,
-            time: selection.original,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: []
-        )
-        let salesCurrent = try await executeSales(spec: salesSpec, offline: offline, refresh: refresh)
-        let salesPrevious = try await executeSales(
-            spec: DataQuerySpec(
-                dataset: .sales,
-                operation: .aggregate,
-                time: compareSelection.original,
-                filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-                groupBy: []
-            ),
-            offline: offline,
-            refresh: refresh
-        )
-        let reviewsCurrent = try await executeReviews(
-            spec: DataQuerySpec(dataset: .reviews, operation: .aggregate, time: selection.original, filters: QueryFilterSet(), groupBy: []),
-            offline: offline,
-            refresh: refresh
-        )
-        let reviewsPrevious = try await executeReviews(
-            spec: DataQuerySpec(dataset: .reviews, operation: .aggregate, time: compareSelection.original, filters: QueryFilterSet(), groupBy: []),
-            offline: offline,
-            refresh: refresh
-        )
-
-        let financeSelection: ResolvedSelection
-        let financeCompareSelection: ResolvedSelection
-        if selection.kind == .fiscalMonths {
-            financeSelection = selection
-            financeCompareSelection = try resolveComparisonSelection(dataset: .finance, current: selection, mode: .monthOverMonth, custom: nil)
-        } else {
-            financeSelection = try resolveSelection(
-                dataset: .finance,
-                time: QueryTimeSelection(fiscalMonth: selection.window.endDate.fiscalMonthString),
-                defaultPreset: .lastMonth
-            )
-            financeCompareSelection = try resolveComparisonSelection(dataset: .finance, current: financeSelection, mode: .monthOverMonth, custom: nil)
-        }
-
-        let financeCurrent = try await executeFinance(
-            spec: DataQuerySpec(
-                dataset: .finance,
-                operation: .aggregate,
-                time: financeSelection.original,
-                filters: QueryFilterSet(),
-                groupBy: []
-            ),
-            offline: offline,
-            refresh: refresh
-        )
-        let financePrevious = try await executeFinance(
-            spec: DataQuerySpec(
-                dataset: .finance,
-                operation: .aggregate,
-                time: financeCompareSelection.original,
-                filters: QueryFilterSet(),
-                groupBy: []
-            ),
-            offline: offline,
-            refresh: refresh
-        )
-
-        let salesCurrentMetrics = salesCurrent.data.aggregates.first?.metrics ?? [:]
-        let salesPreviousMetrics = salesPrevious.data.aggregates.first?.metrics ?? [:]
-        let reviewsCurrentMetrics = reviewsCurrent.data.aggregates.first?.metrics ?? [:]
-        let reviewsPreviousMetrics = reviewsPrevious.data.aggregates.first?.metrics ?? [:]
-        let financeCurrentMetrics = financeCurrent.data.aggregates.first?.metrics ?? [:]
-        let financePreviousMetrics = financePrevious.data.aggregates.first?.metrics ?? [:]
-
-        let briefRows = [
-            briefRow(metric: "Sales proceeds", current: salesCurrentMetrics["proceeds"], previous: salesPreviousMetrics["proceeds"], format: .currency),
-            briefRow(metric: "Sales units", current: salesCurrentMetrics["units"], previous: salesPreviousMetrics["units"], format: .number),
-            briefRow(metric: "Review count", current: reviewsCurrentMetrics["count"], previous: reviewsPreviousMetrics["count"], format: .number),
-            briefRow(metric: "Average rating", current: reviewsCurrentMetrics["averageRating"], previous: reviewsPreviousMetrics["averageRating"], format: .decimal),
-            briefRow(metric: "Reply rate", current: reviewsCurrentMetrics["repliedRate"], previous: reviewsPreviousMetrics["repliedRate"], format: .percentage),
-            briefRow(metric: "Finance proceeds", current: financeCurrentMetrics["proceeds"], previous: financePreviousMetrics["proceeds"], format: .currency)
-        ]
-
-        let tableModel = TableModel(
-            title: selection.label,
-            columns: ["metric", "current", "compare", "change", "note"],
-            rows: briefRows.map { [$0.metric, $0.current, $0.compare ?? "-", $0.change ?? "-", $0.note ?? "-"] }
-        )
-
-        return QueryResult(
-            dataset: .brief,
-            operation: .brief,
-            time: selection.envelope,
-            filters: QueryFilterSet(),
-            source: ["summary-sales", "customer-reviews", "finance"],
-            data: QueryResultData(brief: briefRows),
-            comparison: QueryComparisonEnvelope(mode: compareMode, current: selection.envelope, previous: compareSelection.envelope),
-            warnings: deduplicatedWarnings(
-                salesCurrent.warnings +
-                salesPrevious.warnings +
-                reviewsCurrent.warnings +
-                reviewsPrevious.warnings +
-                financeCurrent.warnings +
-                financePrevious.warnings
-            ),
-            tableModel: tableModel
         )
     }
 
@@ -458,7 +333,7 @@ public final class AnalyticsEngine {
                 tableModel: makeComparisonTable(rows: comparisons)
             )
         case .brief:
-            throw AnalyticsEngineError.invalidQuery("Use the brief dataset for brief operations.")
+            throw AnalyticsEngineError.invalidQuery("Brief summaries are handled by adc brief, adc overview, or adc query run --spec.")
         }
     }
 
@@ -486,7 +361,7 @@ public final class AnalyticsEngine {
                 descriptors: normalizedAnalyticsReports(filters: filters)
             )
         case .brief:
-            return []
+            throw AnalyticsEngineError.invalidQuery("Brief summaries do not load comparison records through AnalyticsEngine.")
         }
     }
 
@@ -1258,45 +1133,6 @@ public final class AnalyticsEngine {
         return warnings
     }
 
-    private enum BriefFormat {
-        case number
-        case decimal
-        case currency
-        case percentage
-    }
-
-    private func briefRow(metric: String, current: Double?, previous: Double?, format: BriefFormat) -> BriefRow {
-        let currentText = formatBriefMetric(current, format: format)
-        let previousText = previous.map { formatBriefMetric($0, format: format) }
-        let changeText: String?
-        if let current, let previous {
-            switch format {
-            case .percentage:
-                changeText = formatPercent(previous == 0 ? 0 : current - previous)
-            default:
-                let deltaPercent = previous == 0 ? nil : (current - previous) / previous
-                changeText = deltaPercent.map(formatPercent)
-            }
-        } else {
-            changeText = nil
-        }
-        return BriefRow(metric: metric, current: currentText, compare: previousText, change: changeText, note: nil)
-    }
-
-    private func formatBriefMetric(_ value: Double?, format: BriefFormat) -> String {
-        guard let value else { return "-" }
-        switch format {
-        case .number:
-            return String(format: "%.0f", value)
-        case .decimal:
-            return String(format: "%.2f", value)
-        case .currency:
-            return "\(reportingCurrency) " + String(format: "%.2f", value)
-        case .percentage:
-            return formatPercent(value)
-        }
-    }
-
     private func formatMetric(_ value: Double) -> String {
         if value.rounded(.towardZero) == value {
             return String(format: "%.0f", value)
@@ -1738,7 +1574,7 @@ public final class AnalyticsEngine {
                 guard let custom else { throw AnalyticsEngineError.invalidQuery("Custom comparison requires compareTime.") }
                 return try resolveSelection(dataset: dataset, time: custom, defaultPreset: .last7d)
             case .previousPeriod:
-                let days = max(1, Calendar.pacific.dateComponents([.day], from: current.window.startDate, to: current.window.endDate).day ?? 0 + 1)
+                let days = max(1, (Calendar.pacific.dateComponents([.day], from: current.window.startDate, to: current.window.endDate).day ?? 0) + 1)
                 let end = Calendar.pacific.date(byAdding: .day, value: -1, to: current.window.startDate) ?? current.window.startDate
                 let start = Calendar.pacific.date(byAdding: .day, value: -(days - 1), to: end) ?? end
                 let window = PTDateWindow(startDate: start, endDate: end)

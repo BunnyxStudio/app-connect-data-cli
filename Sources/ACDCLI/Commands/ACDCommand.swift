@@ -54,7 +54,7 @@ struct CredentialsOptions: ParsableArguments {
 }
 
 struct TimeSelectionOptions: ParsableArguments {
-    @Option(help: "Single PT date, YYYY-MM-DD.")
+    @Option(help: "Single Apple business date in PT, YYYY-MM-DD.")
     var date: String?
 
     @Option(name: .customLong("from"), help: "PT start date, YYYY-MM-DD.")
@@ -63,7 +63,7 @@ struct TimeSelectionOptions: ParsableArguments {
     @Option(name: .customLong("to"), help: "PT end date, YYYY-MM-DD.")
     var to: String?
 
-    @Option(help: "Preset like last-day, last-week, last-7d, last-30d, last-month, year-to-date.")
+    @Option(help: "Preset like last-day, this-week, this-month, last-7d, last-30d, last-month, year-to-date.")
     var range: String?
 
     @Option(name: .customLong("year"), help: "Calendar year.")
@@ -231,6 +231,14 @@ private func normalizeReportingCurrency(_ value: String) throws -> String {
     return normalized
 }
 
+private func normalizeTimeZoneIdentifier(_ value: String) throws -> String {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.isEmpty == false, let timeZone = TimeZone(identifier: trimmed) else {
+        throw ValidationError("Display time zone must be an IANA identifier, for example Asia/Shanghai or America/Los_Angeles.")
+    }
+    return timeZone.identifier
+}
+
 private func configURL(paths: RuntimePaths, local: Bool) -> URL {
     (local ? paths.localBase : paths.userBase).appendingPathComponent("config.json")
 }
@@ -270,13 +278,32 @@ private func makeSpec(
     )
 }
 
+private func executeBriefSummary(
+    period: BriefSummaryPeriod,
+    output: OutputFormat,
+    credentials: CredentialsOptions,
+    fetch: FetchControlOptions
+) async throws {
+    let runtime = try makeRuntime(credentials: credentials, offline: fetch.offline)
+    let report = try await BriefSummaryBuilder(runtime: runtime, offline: fetch.offline, refresh: fetch.refresh)
+        .build(period: period)
+    try OutputRenderer.write(report, format: output)
+}
+
 @main
 @available(macOS 10.15, *)
 struct ACDCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "adc",
         abstract: "Direct App Store Connect data queries for official Apple reporting APIs.",
-        subcommands: [Auth.self, Config.self, Capabilities.self, Sales.self, Reviews.self, Finance.self, Analytics.self, Brief.self, Query.self, Cache.self]
+        discussion: """
+        Start here:
+          adc overview daily
+          adc overview weekly
+          adc sales aggregate --range last-7d --group-by territory
+          adc query run --spec -
+        """,
+        subcommands: [Auth.self, Config.self, Capabilities.self, Overview.self, Sales.self, Reviews.self, Finance.self, Analytics.self, Brief.self, Query.self, Cache.self]
     )
 }
 
@@ -305,7 +332,10 @@ extension ACDCommand {
     }
 
     struct Config: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(subcommands: [Currency.self])
+        static let configuration = CommandConfiguration(
+            abstract: "Manage local defaults such as reporting currency and display time zone.",
+            subcommands: [Currency.self, Timezone.self]
+        )
 
         struct Currency: AsyncParsableCommand {
             static let configuration = CommandConfiguration(subcommands: [Show.self, Set.self])
@@ -356,6 +386,56 @@ extension ACDCommand {
                 }
             }
         }
+
+        struct Timezone: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(subcommands: [Show.self, Set.self])
+
+            struct Show: AsyncParsableCommand {
+                @OptionGroup var global: GlobalOptions
+                @OptionGroup var scope: ConfigScopeOptions
+
+                mutating func run() async throws {
+                    let runtime = try RuntimeFactory.make(credentialsMode: .disabled)
+                    let targetURL = configURL(paths: runtime.paths, local: scope.local)
+                    let storedConfig = try RuntimeFactory.loadConfig(at: targetURL)
+                    let displayTimeZone = scope.local
+                        ? (storedConfig?.displayTimeZone ?? "")
+                        : (runtime.config.displayTimeZone ?? TimeZone.autoupdatingCurrent.identifier)
+                    try OutputRenderer.write(
+                        [
+                            "scope": scope.local ? "local" : "effective",
+                            "displayTimeZone": displayTimeZone,
+                            "path": scope.local ? targetURL.path : ""
+                        ],
+                        format: global.output
+                    )
+                }
+            }
+
+            struct Set: AsyncParsableCommand {
+                @OptionGroup var global: GlobalOptions
+                @OptionGroup var scope: ConfigScopeOptions
+                @Argument(help: "IANA time zone identifier, for example Asia/Shanghai.")
+                var identifier: String
+
+                mutating func run() async throws {
+                    let runtime = try RuntimeFactory.make(credentialsMode: .disabled)
+                    let targetURL = configURL(paths: runtime.paths, local: scope.local)
+                    var config = try RuntimeFactory.loadConfig(at: targetURL) ?? ACDConfig()
+                    config.displayTimeZone = try normalizeTimeZoneIdentifier(identifier)
+                    try RuntimeFactory.saveConfig(config, at: targetURL)
+                    try OutputRenderer.write(
+                        [
+                            "status": "ok",
+                            "scope": scope.local ? "local" : "user",
+                            "displayTimeZone": config.displayTimeZone ?? TimeZone.autoupdatingCurrent.identifier,
+                            "path": targetURL.path
+                        ],
+                        format: global.output
+                    )
+                }
+            }
+        }
     }
 
     struct Capabilities: AsyncParsableCommand {
@@ -389,13 +469,48 @@ extension ACDCommand {
     }
 
     struct Brief: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(subcommands: [Daily.self, Weekly.self, Monthly.self])
+        static let configuration = CommandConfiguration(
+            abstract: "Multi-table business summaries for humans.",
+            discussion: """
+            Semantics:
+              daily      latest complete Apple business day
+              weekly     this week to date
+              monthly    this month to date
+              last-7d    last 7 complete days
+              last-30d   last 30 complete days
+              last-month previous full month
+            """,
+            subcommands: [Daily.self, Weekly.self, Monthly.self, Last7d.self, Last30d.self, LastMonth.self]
+        )
+    }
+
+    struct Overview: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Friendly alias for brief summaries.",
+            discussion: """
+            Same output as `adc brief`, but named for humans.
+            """,
+            subcommands: [
+                ACDCommand.Brief.Daily.self,
+                ACDCommand.Brief.Weekly.self,
+                ACDCommand.Brief.Monthly.self,
+                ACDCommand.Brief.Last7d.self,
+                ACDCommand.Brief.Last30d.self,
+                ACDCommand.Brief.LastMonth.self
+            ]
+        )
     }
 
     struct Query: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(subcommands: [Run.self])
+        static let configuration = CommandConfiguration(
+            abstract: "Run machine-readable JSON specs.",
+            subcommands: [Run.self]
+        )
 
         struct Run: AsyncParsableCommand {
+            static let configuration = CommandConfiguration(
+                abstract: "Execute a JSON query spec. Brief specs return BriefSummaryReport. Other datasets return QueryResult."
+            )
             @OptionGroup var global: GlobalOptions
             @OptionGroup var credentials: CredentialsOptions
             @OptionGroup var fetch: FetchControlOptions
@@ -411,6 +526,12 @@ extension ACDCommand {
                     inputData = try Data(contentsOf: URL(fileURLWithPath: spec))
                 }
                 let querySpec = try JSONDecoder().decode(DataQuerySpec.self, from: inputData)
+                if querySpec.dataset == .brief {
+                    let report = try await BriefSummaryBuilder(runtime: runtime, offline: fetch.offline, refresh: fetch.refresh)
+                        .build(spec: querySpec)
+                    try OutputRenderer.write(report, format: global.output)
+                    return
+                }
                 let result = try await runtime.analytics.execute(spec: querySpec, offline: fetch.offline, refresh: fetch.refresh)
                 try OutputRenderer.write(result, format: global.output)
             }
@@ -669,41 +790,68 @@ extension ACDCommand.Analytics {
 
 extension ACDCommand.Brief {
     struct Daily: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "Latest complete Apple business day versus the previous complete day.")
         @OptionGroup var global: BriefGlobalOptions
         @OptionGroup var credentials: CredentialsOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            let runtime = try makeRuntime(credentials: credentials, offline: fetch.offline)
-            let report = try await BriefSummaryBuilder(runtime: runtime, offline: fetch.offline, refresh: fetch.refresh)
-                .build(period: .daily)
-            try OutputRenderer.write(report, format: global.output)
+            try await executeBriefSummary(period: .daily, output: global.output, credentials: credentials, fetch: fetch)
         }
     }
 
     struct Weekly: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "This week to date versus the previous week at the same progress point.")
         @OptionGroup var global: BriefGlobalOptions
         @OptionGroup var credentials: CredentialsOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            let runtime = try makeRuntime(credentials: credentials, offline: fetch.offline)
-            let report = try await BriefSummaryBuilder(runtime: runtime, offline: fetch.offline, refresh: fetch.refresh)
-                .build(period: .weekly)
-            try OutputRenderer.write(report, format: global.output)
+            try await executeBriefSummary(period: .weekly, output: global.output, credentials: credentials, fetch: fetch)
         }
     }
 
     struct Monthly: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(abstract: "This month to date versus the previous month at the same progress point.")
         @OptionGroup var global: BriefGlobalOptions
         @OptionGroup var credentials: CredentialsOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            let runtime = try makeRuntime(credentials: credentials, offline: fetch.offline)
-            let report = try await BriefSummaryBuilder(runtime: runtime, offline: fetch.offline, refresh: fetch.refresh)
-                .build(period: .monthly)
-            try OutputRenderer.write(report, format: global.output)
+            try await executeBriefSummary(period: .monthly, output: global.output, credentials: credentials, fetch: fetch)
+        }
+    }
+
+    struct Last7d: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "last-7d", abstract: "Last 7 complete days versus the 7 days before that.")
+        @OptionGroup var global: BriefGlobalOptions
+        @OptionGroup var credentials: CredentialsOptions
+        @OptionGroup var fetch: FetchControlOptions
+
+        mutating func run() async throws {
+            try await executeBriefSummary(period: .last7d, output: global.output, credentials: credentials, fetch: fetch)
+        }
+    }
+
+    struct Last30d: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "last-30d", abstract: "Last 30 complete days versus the 30 days before that.")
+        @OptionGroup var global: BriefGlobalOptions
+        @OptionGroup var credentials: CredentialsOptions
+        @OptionGroup var fetch: FetchControlOptions
+
+        mutating func run() async throws {
+            try await executeBriefSummary(period: .last30d, output: global.output, credentials: credentials, fetch: fetch)
+        }
+    }
+
+    struct LastMonth: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(commandName: "last-month", abstract: "Previous full month versus the month before last.")
+        @OptionGroup var global: BriefGlobalOptions
+        @OptionGroup var credentials: CredentialsOptions
+        @OptionGroup var fetch: FetchControlOptions
+
+        mutating func run() async throws {
+            try await executeBriefSummary(period: .lastMonth, output: global.output, credentials: credentials, fetch: fetch)
         }
     }
 }

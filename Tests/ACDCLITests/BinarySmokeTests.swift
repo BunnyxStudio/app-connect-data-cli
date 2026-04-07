@@ -75,7 +75,8 @@ final class BinarySmokeTests: XCTestCase {
         )
 
         XCTAssertEqual(result.status, 0, result.output)
-        XCTAssertTrue(result.output.contains("\"title\" : \"Last Day Summary\""))
+        XCTAssertTrue(result.output.contains("\"title\" : \"Daily Summary\""))
+        XCTAssertTrue(result.output.contains("\"period\" : \"daily\""))
         XCTAssertTrue(result.output.contains("\"sections\""))
     }
 
@@ -88,7 +89,8 @@ final class BinarySmokeTests: XCTestCase {
         )
 
         XCTAssertEqual(result.status, 0, result.output)
-        XCTAssertTrue(result.output.contains("\"title\" : \"Last Week Summary\""))
+        XCTAssertTrue(result.output.contains("\"title\" : \"Week to Date Summary\""))
+        XCTAssertTrue(result.output.contains("\"currentLabel\" : \"this week to date"))
         XCTAssertTrue(result.output.contains("\"Overview\""))
     }
 
@@ -101,8 +103,56 @@ final class BinarySmokeTests: XCTestCase {
         )
 
         XCTAssertEqual(result.status, 0, result.output)
-        XCTAssertTrue(result.output.contains("\"title\" : \"Last Month Summary\""))
+        XCTAssertTrue(result.output.contains("\"title\" : \"Month to Date Summary\""))
+        XCTAssertTrue(result.output.contains("\"timeBasis\""))
         XCTAssertTrue(result.output.contains("\"Data Health\""))
+    }
+
+    func testBriefLastMonthRunsOfflineSummary() throws {
+        let workingDirectory = try makeTempDirectory()
+
+        let result = try runProcess(
+            arguments: ["brief", "last-month", "--offline", "--output", "json"],
+            workingDirectory: workingDirectory
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.contains("\"title\" : \"Last Month Summary\""))
+        XCTAssertTrue(result.output.contains("\"period\" : \"last-month\""))
+    }
+
+    func testOverviewAliasRunsDailySummary() throws {
+        let workingDirectory = try makeTempDirectory()
+
+        let result = try runProcess(
+            arguments: ["overview", "daily", "--offline", "--output", "json"],
+            workingDirectory: workingDirectory
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.contains("\"period\" : \"daily\""))
+        XCTAssertTrue(result.output.contains("\"title\" : \"Daily Summary\""))
+    }
+
+    func testQueryRunBriefUsesBriefSummaryShape() throws {
+        let workingDirectory = try makeTempDirectory()
+
+        let spec = DataQuerySpec(
+            dataset: .brief,
+            operation: .brief,
+            time: QueryTimeSelection(rangePreset: "this-week")
+        )
+        let input = try JSONEncoder().encode(spec)
+        let result = try runProcess(
+            arguments: ["query", "run", "--spec", "-", "--offline", "--output", "json"],
+            workingDirectory: workingDirectory,
+            stdinData: input
+        )
+
+        XCTAssertEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.contains("\"period\" : \"weekly\""))
+        XCTAssertTrue(result.output.contains("\"sections\""))
+        XCTAssertTrue(result.output.contains("\"timeBasis\""))
     }
 
     func testConfigCurrencySetWritesLocalReportingCurrency() throws {
@@ -121,6 +171,24 @@ final class BinarySmokeTests: XCTestCase {
         )
         XCTAssertEqual(showResult.status, 0, showResult.output)
         XCTAssertTrue(showResult.output.contains("\"reportingCurrency\" : \"CNY\""))
+    }
+
+    func testConfigTimezoneSetWritesLocalDisplayTimezone() throws {
+        let workingDirectory = try makeTempDirectory()
+
+        let setResult = try runProcess(
+            arguments: ["config", "timezone", "set", "America/Los_Angeles", "--local", "--output", "json"],
+            workingDirectory: workingDirectory
+        )
+        XCTAssertEqual(setResult.status, 0, setResult.output)
+        XCTAssertTrue(setResult.output.contains("\"displayTimeZone\" : \"America\\/Los_Angeles\""))
+
+        let showResult = try runProcess(
+            arguments: ["config", "timezone", "show", "--output", "json"],
+            workingDirectory: workingDirectory
+        )
+        XCTAssertEqual(showResult.status, 0, showResult.output)
+        XCTAssertTrue(showResult.output.contains("\"displayTimeZone\" : \"America\\/Los_Angeles\""))
     }
 
     private func seedSubscriptionCache(in workingDirectory: URL) throws {

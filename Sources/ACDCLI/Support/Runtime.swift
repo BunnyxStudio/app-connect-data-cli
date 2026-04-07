@@ -184,7 +184,14 @@ enum RuntimeFactory {
                 env["ADC_REPORTING_CURRENCY"],
                 localConfig?.reportingCurrency,
                 userConfig?.reportingCurrency
-            )?.normalizedCurrencyCode
+            )?.normalizedCurrencyCode,
+            displayTimeZone: normalizedTimeZoneIdentifier(
+                firstNonEmpty(
+                    env["ADC_DISPLAY_TIMEZONE"],
+                    localConfig?.displayTimeZone,
+                    userConfig?.displayTimeZone
+                )
+            )
         )
     }
 
@@ -213,5 +220,11 @@ enum RuntimeFactory {
         values.compactMap { $0 }.first { value in
             value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
+    }
+
+    private static func normalizedTimeZoneIdentifier(_ value: String?) -> String? {
+        guard let trimmed = firstNonEmpty(value) else { return nil }
+        guard TimeZone(identifier: trimmed) != nil else { return nil }
+        return trimmed
     }
 }

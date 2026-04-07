@@ -20,19 +20,22 @@ public struct ACDConfig: Codable, Equatable, Sendable {
     public var vendorNumber: String?
     public var p8Path: String?
     public var reportingCurrency: String?
+    public var displayTimeZone: String?
 
     public init(
         issuerID: String? = nil,
         keyID: String? = nil,
         vendorNumber: String? = nil,
         p8Path: String? = nil,
-        reportingCurrency: String? = nil
+        reportingCurrency: String? = nil,
+        displayTimeZone: String? = nil
     ) {
         self.issuerID = issuerID
         self.keyID = keyID
         self.vendorNumber = vendorNumber
         self.p8Path = p8Path
         self.reportingCurrency = reportingCurrency
+        self.displayTimeZone = displayTimeZone
     }
 }
 

@@ -17,18 +17,39 @@ import Foundation
 @testable import ACDCore
 
 final class PTDateWindowTests: XCTestCase {
-    func testLastDayPresetResolvesToYesterdayInPacificTime() throws {
-        let reference = try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: "2026-04-07"))
+    func testLastDayPresetUsesLatestCompleteDayBeforeDailyRollover() throws {
+        let reference = try makePacificDate(year: 2026, month: 4, day: 7, hour: 3)
+        let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "last day", defaultPreset: nil, reference: reference))
+        XCTAssertEqual(window.startDatePT, "2026-04-05")
+        XCTAssertEqual(window.endDatePT, "2026-04-05")
+    }
+
+    func testLastDayPresetUsesYesterdayAfterDailyRollover() throws {
+        let reference = try makePacificDate(year: 2026, month: 4, day: 7, hour: 5)
         let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "last day", defaultPreset: nil, reference: reference))
         XCTAssertEqual(window.startDatePT, "2026-04-06")
         XCTAssertEqual(window.endDatePT, "2026-04-06")
     }
 
     func testLastWeekPresetResolvesToPreviousCompleteWeek() throws {
-        let reference = try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: "2026-04-07"))
+        let reference = try makePacificDate(year: 2026, month: 4, day: 10, hour: 5)
         let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "last-week", defaultPreset: nil, reference: reference))
         XCTAssertEqual(window.startDatePT, "2026-03-30")
         XCTAssertEqual(window.endDatePT, "2026-04-05")
+    }
+
+    func testThisWeekPresetUsesWeekToDateFromLatestCompleteDay() throws {
+        let reference = try makePacificDate(year: 2026, month: 4, day: 10, hour: 5)
+        let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "this-week", defaultPreset: nil, reference: reference))
+        XCTAssertEqual(window.startDatePT, "2026-04-06")
+        XCTAssertEqual(window.endDatePT, "2026-04-09")
+    }
+
+    func testThisMonthPresetUsesMonthToDateFromLatestCompleteDay() throws {
+        let reference = try makePacificDate(year: 2026, month: 4, day: 7, hour: 5)
+        let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "this-month", defaultPreset: nil, reference: reference))
+        XCTAssertEqual(window.startDatePT, "2026-04-01")
+        XCTAssertEqual(window.endDatePT, "2026-04-06")
     }
 
     func testFullFiscalMonthsAndDailyDatesSplitWindow() throws {
@@ -41,5 +62,10 @@ final class PTDateWindowTests: XCTestCase {
 
         let dates = ptDates(in: window, excludingFullMonths: true).map(\.ptDateString)
         XCTAssertEqual(dates, ["2026-04-01", "2026-04-02", "2026-04-03"])
+    }
+
+    private func makePacificDate(year: Int, month: Int, day: Int, hour: Int) throws -> Date {
+        let date = Calendar.pacific.date(from: DateComponents(year: year, month: month, day: day, hour: hour))
+        return try XCTUnwrap(date)
     }
 }

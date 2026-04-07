@@ -191,7 +191,8 @@ enum OutputRenderer {
             formatTableTitle(report.title),
             "Current: \(report.currentLabel)",
             "Compare: \(report.compareLabel)",
-            "Currency: \(report.reportingCurrency)"
+            "Currency: \(report.reportingCurrency)",
+            "Time basis: \(report.timeBasis)"
         ]
 
         for section in report.sections {
@@ -223,7 +224,7 @@ enum OutputRenderer {
     private static func renderBriefSummaryMarkdown(_ report: BriefSummaryReport) -> String {
         var blocks: [String] = [
             "# \(report.title)",
-            "- Current: \(report.currentLabel)\n- Compare: \(report.compareLabel)\n- Currency: \(report.reportingCurrency)"
+            "- Current: \(report.currentLabel)\n- Compare: \(report.compareLabel)\n- Currency: \(report.reportingCurrency)\n- Time basis: \(report.timeBasis)"
         ]
 
         for section in report.sections {

@@ -2,9 +2,6 @@
   "dataset": "brief",
   "operation": "brief",
   "time": {
-    "rangePreset": "last-week"
-  },
-  "compare": "week-over-week",
-  "filters": {},
-  "groupBy": []
+    "rangePreset": "this-week"
+  }
 }

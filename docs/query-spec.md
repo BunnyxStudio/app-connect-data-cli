@@ -1,15 +1,15 @@
 # Query Spec
 
-`adc query run --spec <file|->` accepts a `DataQuerySpec` JSON payload.
+`adc query run --spec <file|->` accepts a JSON payload.
 
-## Example
+## Shared request shape
 
 ```json
 {
   "dataset": "sales",
   "operation": "aggregate",
   "time": {
-    "rangePreset": "last-week"
+    "rangePreset": "last-7d"
   },
   "compare": "previous-period",
   "filters": {
@@ -20,9 +20,7 @@
 }
 ```
 
-## Fields
-
-### `dataset`
+## Datasets
 
 - `sales`
 - `reviews`
@@ -30,16 +28,14 @@
 - `analytics`
 - `brief`
 
-### `operation`
+## Operations
 
 - `records`
 - `aggregate`
 - `compare`
 - `brief`
 
-### `time`
-
-Supported keys:
+## Time fields
 
 - `datePT`
 - `startDatePT`
@@ -52,15 +48,17 @@ Supported keys:
 Supported presets:
 
 - `last-day`
-- `last-7d`
+- `this-week`
 - `last-week`
+- `last-7d`
+- `this-month`
 - `last-30d`
 - `last-month`
 - `year-to-date`
 - `previous-week`
 - `previous-month`
 
-### `compare`
+## Compare
 
 - `previous-period`
 - `week-over-week`
@@ -68,11 +66,9 @@ Supported presets:
 - `year-over-year`
 - `custom`
 
-### `compareTime`
+`compareTime` is valid only with `compare: "custom"`.
 
-Use only with `compare: "custom"`.
-
-### `filters`
+## Filters
 
 Supported keys:
 
@@ -88,7 +84,7 @@ Supported keys:
 - `rating`
 - `responseState`
 
-### `groupBy`
+## Group by
 
 Supported values:
 
@@ -107,6 +103,50 @@ Supported values:
 - `platform`
 - `sourceReport`
 - `subscription`
+
+## Response shape
+
+For `sales`, `reviews`, `finance`, and `analytics`, `query run` returns the shared `QueryResult` JSON model.
+
+For `brief`, `query run` returns `BriefSummaryReport`.
+
+That is the same summary shape used by:
+
+- `adc brief ...`
+- `adc overview ...`
+
+## Brief spec rules
+
+`brief` is intentionally narrower than raw datasets.
+
+Use:
+
+```json
+{
+  "dataset": "brief",
+  "operation": "brief",
+  "time": {
+    "rangePreset": "this-week"
+  }
+}
+```
+
+Supported `brief` presets:
+
+- `last-day`
+- `this-week`
+- `this-month`
+- `last-7d`
+- `last-30d`
+- `last-month`
+
+Do not send:
+
+- `filters`
+- `groupBy`
+- `limit`
+- `compare`
+- `compareTime`
 
 ## Examples
 

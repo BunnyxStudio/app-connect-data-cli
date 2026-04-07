@@ -306,44 +306,19 @@ public struct QueryComparisonRow: Codable, Equatable, Sendable {
     }
 }
 
-public struct BriefRow: Codable, Equatable, Sendable {
-    public var metric: String
-    public var current: String
-    public var compare: String?
-    public var change: String?
-    public var note: String?
-
-    public init(
-        metric: String,
-        current: String,
-        compare: String? = nil,
-        change: String? = nil,
-        note: String? = nil
-    ) {
-        self.metric = metric
-        self.current = current
-        self.compare = compare
-        self.change = change
-        self.note = note
-    }
-}
-
 public struct QueryResultData: Codable, Equatable, Sendable {
     public var records: [QueryRecord]
     public var aggregates: [QueryAggregateRow]
     public var comparisons: [QueryComparisonRow]
-    public var brief: [BriefRow]
 
     public init(
         records: [QueryRecord] = [],
         aggregates: [QueryAggregateRow] = [],
-        comparisons: [QueryComparisonRow] = [],
-        brief: [BriefRow] = []
+        comparisons: [QueryComparisonRow] = []
     ) {
         self.records = records
         self.aggregates = aggregates
         self.comparisons = comparisons
-        self.brief = brief
     }
 }
 
