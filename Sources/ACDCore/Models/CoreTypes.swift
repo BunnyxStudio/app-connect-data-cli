@@ -107,7 +107,7 @@ public struct SalesReportQuery: Codable, Sendable, Equatable {
             reportType: "SUBSCRIPTION",
             reportSubType: "SUMMARY",
             vendorNumber: vendorNumber,
-            version: "1_4",
+            version: "1_3",
             reportDate: reportDate
         )
     }
@@ -118,7 +118,7 @@ public struct SalesReportQuery: Codable, Sendable, Equatable {
             reportType: "SUBSCRIPTION_EVENT",
             reportSubType: "SUMMARY",
             vendorNumber: vendorNumber,
-            version: "1_4",
+            version: "1_3",
             reportDate: reportDate
         )
     }
@@ -130,6 +130,28 @@ public struct SalesReportQuery: Codable, Sendable, Equatable {
             reportSubType: "DETAILED",
             vendorNumber: vendorNumber,
             version: "1_3",
+            reportDate: reportDate
+        )
+    }
+
+    public static func preOrder(vendorNumber: String, reportDate: String?) -> SalesReportQuery {
+        SalesReportQuery(
+            frequency: "DAILY",
+            reportType: "PRE_ORDER",
+            reportSubType: "SUMMARY",
+            vendorNumber: vendorNumber,
+            version: "1_0",
+            reportDate: reportDate
+        )
+    }
+
+    public static func subscriptionOfferCodeRedemption(vendorNumber: String, reportDate: String?) -> SalesReportQuery {
+        SalesReportQuery(
+            frequency: "DAILY",
+            reportType: "SUBSCRIPTION_OFFER_CODE_REDEMPTION",
+            reportSubType: "SUMMARY",
+            vendorNumber: vendorNumber,
+            version: "1_0",
             reportDate: reportDate
         )
     }
@@ -171,6 +193,7 @@ public struct FinanceReportQuery: Codable, Sendable, Equatable {
 public enum ReportSource: String, Codable, Sendable {
     case sales
     case finance
+    case analytics
 }
 
 public enum ReportCachePolicy: String, Codable, Sendable {
@@ -241,6 +264,7 @@ public protocol ASCClientProtocol {
     func validateToken() async throws
     func downloadSalesReport(query: SalesReportQuery) async throws -> Data
     func downloadFinanceReport(query: FinanceReportQuery) async throws -> Data
+    func listApps(limit: Int?) async throws -> [ASCAppSummary]
     func fetchLatestCustomerReviews(
         maxApps: Int?,
         perAppLimit: Int?,
@@ -249,10 +273,23 @@ public protocol ASCClientProtocol {
         pageLimit: Int,
         query: ASCCustomerReviewQuery
     ) async throws -> [ASCLatestReview]
-    func createOrUpdateCustomerReviewResponse(
-        reviewID: String,
-        responseBody: String
-    ) async throws -> ASCLatestReviewDeveloperResponse
+    func listAnalyticsReportRequests(appID: String) async throws -> [ASCAnalyticsReportRequest]
+    func createAnalyticsReportRequest(
+        appID: String,
+        accessType: ASCAnalyticsAccessType
+    ) async throws -> ASCAnalyticsReportRequest
+    func listAnalyticsReports(
+        requestID: String,
+        category: ASCAnalyticsCategory?,
+        name: String?
+    ) async throws -> [ASCAnalyticsReport]
+    func listAnalyticsReportInstances(
+        reportID: String,
+        granularity: ASCAnalyticsGranularity?,
+        processingDate: String?
+    ) async throws -> [ASCAnalyticsReportInstance]
+    func listAnalyticsReportSegments(instanceID: String) async throws -> [ASCAnalyticsReportSegment]
+    func download(url: URL) async throws -> Data
 }
 
 public protocol ReportDownloaderProtocol {
@@ -262,6 +299,14 @@ public protocol ReportDownloaderProtocol {
     func fetchSubscriptionDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
     func fetchSubscriptionEventDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
     func fetchSubscriberDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
+    func fetchPreOrderDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
+    func fetchSubscriptionOfferCodeRedemptionDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
     func fetchFinanceMonth(fiscalMonth: String, reportType: FinanceReportType, regionCode: String, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport
+    func fetchAnalyticsSegment(
+        segment: ASCAnalyticsReportSegment,
+        reportName: String,
+        reportDateKey: String,
+        cachePolicy: ReportCachePolicy
+    ) async throws -> DownloadedReport
     func clearDiskCache() throws
 }

@@ -2,27 +2,39 @@
 
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 
-`app-connect-data-cli` is a command-line tool for querying App Store Connect sales, finance, subscription, and review data over explicit time ranges.
+`app-connect-data-cli` is a read-only CLI for querying App Store Connect sales, finance, customer reviews, and Apple Analytics reports over explicit time windows.
 
-Ask for a single day, a custom date window, or a preset such as `last-week`, and the CLI fetches the required data on demand. Raw files are cached locally, but caching stays in the background unless you want to control it.
+It is built for operations, product, business analysis, and agent workflows that need structured Apple reporting data without a separate `sync` step.
 
 ## What it does
 
-- Query sales and finance snapshots for a specific date range
-- Build dashboard-style module views without a separate sync step
-- Read and summarize customer reviews
-- Return output as `json`, `table`, or `markdown`
-- Provide a stable JSON spec entry point for agents and scripts
+- Query Apple sales, finance, reviews, and analytics data directly by date, range, year, or fiscal month
+- Aggregate and compare periods with stable JSON output
+- Generate weekly and monthly briefs
+- Render the same result as `json`, `table`, or `markdown`
+- Accept a canonical JSON spec through `query run --spec`
 
-## Scope
+## Boundaries
 
-This project focuses on App Store Connect data access and analysis.
+- Read-only only
+- Apple official reporting APIs and Apple official report downloads only
+- No project-owned backend
+- No metadata, TestFlight, build, pricing, signing, or release management
 
-It does not cover release automation, TestFlight distribution, metadata management, signing, or screenshot upload workflows. If you need a broader App Store Connect CLI, see [App Store Connect CLI](https://github.com/rudrankriyam/App-Store-Connect-CLI).
+## Privacy and security
+
+This project does not run a project-owned server and does not upload your `.p8` key to any app-connect-data-cli backend.
+
+- Your `.p8` stays on your machine
+- The CLI reads the key from a local path and keeps it in memory only for request signing
+- The CLI does not write `.p8` contents into config, cache, logs, or output
+- Config and cache files are stored locally under `./.app-connect-data-cli/` or `~/.app-connect-data-cli/`
+- Config, cache, and report files are created with owner-only permissions
+- Existing `config.json` and `.p8` files are rejected if permissions are too broad
+
+All network requests go directly to Apple App Store Connect endpoints.
 
 ## Installation
-
-Build from source:
 
 ```bash
 git clone <your-repo-url> app-connect-data-cli
@@ -32,7 +44,7 @@ swift build -c release
 
 ## Configuration
 
-You can configure credentials with environment variables:
+Set credentials with environment variables:
 
 ```bash
 export ASC_ISSUER_ID="YOUR_ISSUER_ID"
@@ -41,10 +53,10 @@ export ASC_VENDOR_NUMBER="YOUR_VENDOR_NUMBER"
 export ASC_P8_PATH="/absolute/path/AuthKey_XXXXXX.p8"
 ```
 
-Or with a config file:
+Or create one of these files:
 
-- Repo-local: `./.app-connect-data-cli/config.json`
-- User-level: `~/.app-connect-data-cli/config.json`
+- `./.app-connect-data-cli/config.json`
+- `~/.app-connect-data-cli/config.json`
 
 Example:
 
@@ -59,98 +71,82 @@ Example:
 
 Resolution order:
 
-`flags > environment variables > ./.app-connect-data-cli/config.json > ~/.app-connect-data-cli/config.json`
-
-For local file safety, the CLI expects owner-only permissions on both `config.json` and the `.p8` file.
-Use `chmod 600` if needed.
+`flags > environment > ./.app-connect-data-cli/config.json > ~/.app-connect-data-cli/config.json`
 
 ## Quick start
 
-Validate credentials:
-
 ```bash
 ./.build/release/app-connect-data-cli auth validate --output table
+./.build/release/app-connect-data-cli capabilities list --output table
+./.build/release/app-connect-data-cli sales records --range last-week --output json
+./.build/release/app-connect-data-cli reviews aggregate --range last-week --group-by territory --output table
+./.build/release/app-connect-data-cli brief weekly --output markdown
 ```
 
-Query sales for last week:
+## Command surface
 
 ```bash
-./.build/release/app-connect-data-cli query snapshot --source sales --range last-week --output table
+app-connect-data-cli auth validate
+app-connect-data-cli capabilities list
+
+app-connect-data-cli sales records --range last-week
+app-connect-data-cli sales aggregate --range last-week --group-by territory
+app-connect-data-cli sales compare --range last-week --compare previous-period
+
+app-connect-data-cli reviews records --range last-week
+app-connect-data-cli reviews aggregate --range last-week --group-by rating
+app-connect-data-cli reviews compare --range last-week --compare previous-period
+
+app-connect-data-cli finance records --fiscal-month 2026-02
+app-connect-data-cli finance aggregate --fiscal-month 2026-02 --group-by territory --group-by currency
+app-connect-data-cli finance compare --fiscal-month 2026-02 --compare month-over-month
+
+app-connect-data-cli analytics records --range last-week --source-report usage
+app-connect-data-cli analytics aggregate --range last-week --source-report acquisition --group-by app
+app-connect-data-cli analytics compare --range last-week --source-report performance --compare previous-period
+
+app-connect-data-cli brief weekly
+app-connect-data-cli brief monthly
+app-connect-data-cli query run --spec -
+app-connect-data-cli cache clear
 ```
 
-Query a combined module view for the latest day:
+## Time selection
 
-```bash
-./.build/release/app-connect-data-cli query modules --range last-day --output markdown
-```
-
-Summarize recent reviews:
-
-```bash
-./.build/release/app-connect-data-cli reviews summary --range last-week --output json
-```
-
-## Date selection
-
-Use any one of these:
+Use one of these:
 
 - `--date YYYY-MM-DD`
 - `--from YYYY-MM-DD --to YYYY-MM-DD`
 - `--range <preset>`
+- `--year YYYY`
+- `--fiscal-month YYYY-MM`
+- `--fiscal-year YYYY`
 
 Supported presets:
 
-- `today`
 - `last-day`
-- `last-week`
 - `last-7d`
+- `last-week`
 - `last-30d`
-- `this-week`
-- `this-month`
 - `last-month`
+- `year-to-date`
+- `previous-week`
+- `previous-month`
 
-Examples:
+## Direct query model
 
-```bash
-./.build/release/app-connect-data-cli query snapshot --date 2026-04-06
-./.build/release/app-connect-data-cli query snapshot --from 2026-04-01 --to 2026-04-06
-./.build/release/app-connect-data-cli query snapshot --range "last week"
-./.build/release/app-connect-data-cli query snapshot --range last-month
-```
+The CLI resolves the requested window, fetches Apple data on demand when credentials are available, reuses local cache when possible, and returns the result immediately.
 
-## Query model
+Use:
 
-The default flow is direct query:
+- `--offline` for cache-only reads
+- `--refresh` to ignore cached raw files and fetch again
 
-1. Resolve the requested time range
-2. Fetch the required reports or reviews if credentials are available
-3. Reuse local cache when possible
-4. Return the result immediately
+There is no public `sync` command in the default workflow.
 
-Use these flags when you want tighter control:
+## Agent usage
 
-- `--offline` reads from local cache only
-- `--refresh` ignores cached raw files and fetches again
-
-## Privacy and security
-
-This project does not run a project-owned backend and does not upload your credentials to any app-connect-data-cli server.
-
-- Your `.p8` file stays on your machine
-- The CLI reads the `.p8` file from a local path and keeps the PEM in memory only for signing
-- The CLI does not write the `.p8` contents into config files, cache files, or generated output
-- Repo-local credentials and cache live under `.app-connect-data-cli/`, which is ignored by git
-- Cache directories and files are created with owner-only permissions
-- Existing `config.json`, `.p8`, and cache files are checked for owner-only permissions before use
-
-Network traffic goes directly to Apple App Store Connect endpoints for reports and reviews.
-
-For USD normalization, the CLI may also call the Frankfurter FX API with only a date and a list of currency codes.
-Those FX requests do not include your `.p8` file, JWT, vendor number, review text, or raw report contents.
-
-## Agent and automation usage
-
-The most stable interface for agents is:
+The canonical machine interface is:
 
 ```bash
 app-connect-data-cli query run --spec <file|-> --output json
@@ -159,68 +155,23 @@ app-connect-data-cli query run --spec <file|-> --output json
 Example:
 
 ```bash
-cat examples/queries/snapshot-30d.json | ./.build/release/app-connect-data-cli query run --spec - --output json
+cat examples/queries/sales-aggregate-last-week.json | ./.build/release/app-connect-data-cli query run --spec - --output json
 ```
 
-Supported `kind` values:
-
-- `snapshot`
-- `modules`
-- `health`
-- `trend`
-- `top-products`
-- `reviews.list`
-- `reviews.summary`
-
-See [docs/query-spec.md](docs/query-spec.md) and [docs/agent-guide.md](docs/agent-guide.md) for details.
-
-## Common commands
-
-```bash
-app-connect-data-cli auth validate
-
-app-connect-data-cli query snapshot --range last-week
-app-connect-data-cli query modules --range last-day
-app-connect-data-cli query health
-app-connect-data-cli query trend --source finance --range last-month
-app-connect-data-cli query top-products --territory US --range last-30d
-app-connect-data-cli query run --spec -
-
-app-connect-data-cli reviews list --range last-week
-app-connect-data-cli reviews summary --range last-week
-app-connect-data-cli reviews respond REVIEW_ID --body "Thanks for the feedback."
-
-app-connect-data-cli doctor probe
-app-connect-data-cli doctor audit
-app-connect-data-cli doctor reconcile --range last-month
-
-app-connect-data-cli cache clear
-```
-
-## Advanced prefetch
-
-`sync` is still available for prefetching, warming cache, or debugging fetch coverage, but it is not required for normal use.
-
-```bash
-app-connect-data-cli sync sales --days 7
-app-connect-data-cli sync subscriptions --days 7
-app-connect-data-cli sync finance --months 2
-app-connect-data-cli sync reviews --total-limit 200
-```
+See [docs/query-spec.md](./docs/query-spec.md) and [docs/agent-guide.md](./docs/agent-guide.md).
 
 ## Local cache
 
-This project uses local files instead of a database.
+Local cache is file-based.
 
 - Repo-local: `./.app-connect-data-cli/cache/`
 - User-level: `~/.app-connect-data-cli/cache/`
 
 Cached content includes:
 
-- Raw report files
+- Raw Apple report files
 - `manifest.json`
 - `reviews/latest.json`
-- `fx-rates.json`
 
 ## Development
 
@@ -234,8 +185,8 @@ swift test
 
 - Usage questions: GitHub Discussions
 - Bugs and feature requests: GitHub Issues
-- Security issues: [SECURITY.md](SECURITY.md)
-- Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Security issues: [SECURITY.md](./SECURITY.md)
+- Contribution guide: [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## License
 
@@ -243,11 +194,3 @@ Licensed under the Apache License, Version 2.0.
 
 Forking, modification, redistribution, and commercial use are allowed.
 Redistributed or derivative versions must retain the license and the original project attribution in [NOTICE](./NOTICE).
-
-## Attribution requirement
-
-If you fork this project, ship a modified build, or use it as part of a commercial product, you must keep:
-
-- the Apache 2.0 license text
-- the original project attribution in [NOTICE](./NOTICE)
-- clear change notices for files you modify, as required by Apache 2.0

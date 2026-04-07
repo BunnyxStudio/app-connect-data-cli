@@ -1,54 +1,60 @@
 # Architecture
 
-仓库分三层。
+The CLI has three layers.
 
 ## `ACDCore`
 
-负责最底层能力：
+The lowest layer owns Apple-facing primitives:
 
-- JWT 签名
-- `.p8` 导入
-- ASC HTTP client
-- 报表下载
-- 报表解析
-- 评论接口
-- PT 时间范围解析
+- JWT signing
+- `.p8` import
+- App Store Connect HTTP requests
+- Sales report download
+- Finance report download
+- Review retrieval
+- Review response support is not part of the public command surface for this release
+- PT time parsing
 
-这一层不关心 CLI。
-也不关心 UI。
+This layer does not know about table rendering or brief generation.
 
 ## `ACDAnalytics`
 
-负责纯数据层：
+This layer owns local analysis over Apple data:
 
-- 原始报表 cache
-- manifest
-- FX cache
-- 聚合计算
-- health / snapshot / modules / trend / top-products
-- 评论摘要
+- Raw report cache
+- Manifest management
+- Review cache
+- Record normalization
+- Aggregates and comparisons
+- Weekly and monthly briefs
+- Table models for terminal output
 
-这一层只读本地文件。
-不依赖 SwiftData。
+This layer is local-first.
+It does not depend on a project-owned server.
 
 ## `ACDCLI`
 
-负责用户入口：
+This layer owns the command surface:
 
-- 配置解析
-- 时间参数解析
-- 按需补数据
-- 输出格式
-- agent query spec
+- Credential resolution
+- Time range parsing
+- On-demand data fetch
+- JSON spec execution
+- Output rendering
 
-## 数据流
+## Data flow
 
-1. 用户直接执行 `query` 或 `reviews`
-2. CLI 先解析 `--date / --from / --to / --range`
-3. 有凭据时，CLI 按需拉取需要的报表或评论
-4. 原始数据写入 `.app-connect-data-cli/cache/`
-5. `ACDAnalytics` 读取 cache 并聚合
-6. CLI 输出 `json` / `table` / `markdown`
+1. The user calls a command such as `sales aggregate`, `reviews compare`, or `query run`.
+2. The CLI resolves the requested time window and filters.
+3. If credentials are available, the CLI fetches the required Apple data on demand.
+4. Raw files and review payloads are stored locally.
+5. `ACDAnalytics` computes aggregates, comparisons, and briefs.
+6. The CLI renders `json`, `table`, or `markdown`.
 
-`sync` 仍然存在。
-但它只是高级预热入口，不是默认流程。
+## Design rules
+
+- Keep the command surface read-only.
+- Keep Apple as the only external data source.
+- Keep cache behavior internal.
+- Keep JSON as the canonical machine format.
+- Keep table rendering derived from the same data model, not from a separate code path.

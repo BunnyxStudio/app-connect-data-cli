@@ -1,0 +1,21 @@
+{
+  "dataset": "sales",
+  "operation": "aggregate",
+  "time": {
+    "rangePreset": "last-week"
+  },
+  "compare": "previous-period",
+  "filters": {
+    "territory": [
+      "US",
+      "CA"
+    ],
+    "sourceReport": [
+      "summary-sales"
+    ]
+  },
+  "groupBy": [
+    "territory",
+    "version"
+  ]
+}

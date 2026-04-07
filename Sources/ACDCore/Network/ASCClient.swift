@@ -343,6 +343,43 @@ public final class ASCClient: ASCClientProtocol {
         try await request(path: "/v1/financeReports", queryItems: query.queryItems)
     }
 
+    public func listApps(limit: Int? = 200) async throws -> [ASCAppSummary] {
+        let cappedLimit = min(max(limit ?? 200, 1), 200)
+        let decoder = JSONDecoder()
+        var apps: [ASCAppSummary] = []
+        var pageURL = makeURL(
+            path: "/v1/apps",
+            queryItems: [
+                URLQueryItem(name: "limit", value: "\(cappedLimit)"),
+                URLQueryItem(name: "fields[apps]", value: "name,bundleId")
+            ]
+        )
+        var visitedURLs: Set<String> = []
+
+        while let currentPageURL = pageURL {
+            if visitedURLs.insert(currentPageURL.absoluteString).inserted == false {
+                break
+            }
+            let data = try await request(url: currentPageURL)
+            let response = try decoder.decode(ASCCollectionResponse<ASCAppResource>.self, from: data)
+            apps.append(contentsOf: response.data.map {
+                ASCAppSummary(
+                    id: $0.id,
+                    name: ($0.attributes?.name?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown App",
+                    bundleID: ($0.attributes?.bundleId?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
+                )
+            })
+            if let nextLink = normalize(response.links?.next),
+               let nextPageURL = URL(string: nextLink, relativeTo: baseURL)?.absoluteURL {
+                pageURL = nextPageURL
+            } else {
+                pageURL = nil
+            }
+        }
+
+        return apps
+    }
+
     public func fetchRatingsSummary(
         appIDs: [String],
         territory: String? = nil,
@@ -929,6 +966,207 @@ public final class ASCClient: ASCClientProtocol {
         }
     }
 
+    public func listAnalyticsReportRequests(appID: String) async throws -> [ASCAnalyticsReportRequest] {
+        let decoder = JSONDecoder()
+        var results: [ASCAnalyticsReportRequest] = []
+        var pageURL = makeURL(
+            path: "/v1/apps/\(appID)/analyticsReportRequests",
+            queryItems: [
+                URLQueryItem(name: "limit", value: "200"),
+                URLQueryItem(name: "fields[analyticsReportRequests]", value: "accessType,stoppedDueToInactivity")
+            ]
+        )
+        var visitedURLs: Set<String> = []
+        while let currentPageURL = pageURL {
+            if visitedURLs.insert(currentPageURL.absoluteString).inserted == false {
+                break
+            }
+            let data = try await request(url: currentPageURL)
+            let response = try decoder.decode(ASCCollectionResponse<ASCAnalyticsReportRequestResource>.self, from: data)
+            results.append(contentsOf: response.data.map {
+                ASCAnalyticsReportRequest(
+                    id: $0.id,
+                    accessType: $0.attributes?.accessType.flatMap(ASCAnalyticsAccessType.init(rawValue:)),
+                    stoppedDueToInactivity: $0.attributes?.stoppedDueToInactivity ?? false
+                )
+            })
+            if let nextLink = normalize(response.links?.next),
+               let nextPageURL = URL(string: nextLink, relativeTo: baseURL)?.absoluteURL {
+                pageURL = nextPageURL
+            } else {
+                pageURL = nil
+            }
+        }
+        return results
+    }
+
+    public func createAnalyticsReportRequest(
+        appID: String,
+        accessType: ASCAnalyticsAccessType
+    ) async throws -> ASCAnalyticsReportRequest {
+        let requestBody = ASCAnalyticsReportRequestCreateRequest(
+            data: .init(
+                attributes: .init(accessType: accessType.rawValue),
+                relationships: .init(
+                    app: .init(
+                        data: .init(id: appID)
+                    )
+                )
+            )
+        )
+        let body = try JSONEncoder().encode(requestBody)
+        let data = try await request(path: "/v1/analyticsReportRequests", method: .post, body: body)
+        let response = try JSONDecoder().decode(
+            ASCSingleResourceResponse<ASCAnalyticsReportRequestResource>.self,
+            from: data
+        )
+        return ASCAnalyticsReportRequest(
+            id: response.data.id,
+            accessType: response.data.attributes?.accessType.flatMap(ASCAnalyticsAccessType.init(rawValue:)),
+            stoppedDueToInactivity: response.data.attributes?.stoppedDueToInactivity ?? false
+        )
+    }
+
+    public func listAnalyticsReports(
+        requestID: String,
+        category: ASCAnalyticsCategory?,
+        name: String?
+    ) async throws -> [ASCAnalyticsReport] {
+        let decoder = JSONDecoder()
+        var queryItems = [
+            URLQueryItem(name: "limit", value: "200"),
+            URLQueryItem(name: "fields[analyticsReports]", value: "name,category,instances")
+        ]
+        if let category {
+            queryItems.append(URLQueryItem(name: "filter[category]", value: category.rawValue))
+        }
+        if let name = normalize(name) {
+            queryItems.append(URLQueryItem(name: "filter[name]", value: name))
+        }
+        var results: [ASCAnalyticsReport] = []
+        var pageURL = makeURL(path: "/v1/analyticsReportRequests/\(requestID)/reports", queryItems: queryItems)
+        var visitedURLs: Set<String> = []
+        while let currentPageURL = pageURL {
+            if visitedURLs.insert(currentPageURL.absoluteString).inserted == false {
+                break
+            }
+            let data = try await request(url: currentPageURL)
+            let response = try decoder.decode(ASCCollectionResponse<ASCAnalyticsReportResource>.self, from: data)
+            results.append(contentsOf: response.data.map {
+                ASCAnalyticsReport(
+                    id: $0.id,
+                    name: $0.attributes?.name ?? "",
+                    category: $0.attributes?.category.flatMap(ASCAnalyticsCategory.init(rawValue:))
+                )
+            })
+            if let nextLink = normalize(response.links?.next),
+               let nextPageURL = URL(string: nextLink, relativeTo: baseURL)?.absoluteURL {
+                pageURL = nextPageURL
+            } else {
+                pageURL = nil
+            }
+        }
+        return results
+    }
+
+    public func listAnalyticsReportInstances(
+        reportID: String,
+        granularity: ASCAnalyticsGranularity?,
+        processingDate: String?
+    ) async throws -> [ASCAnalyticsReportInstance] {
+        let decoder = JSONDecoder()
+        var queryItems = [
+            URLQueryItem(name: "limit", value: "200"),
+            URLQueryItem(name: "fields[analyticsReportInstances]", value: "granularity,processingDate,segments")
+        ]
+        if let granularity {
+            queryItems.append(URLQueryItem(name: "filter[granularity]", value: granularity.rawValue))
+        }
+        if let processingDate = normalize(processingDate) {
+            queryItems.append(URLQueryItem(name: "filter[processingDate]", value: processingDate))
+        }
+
+        var results: [ASCAnalyticsReportInstance] = []
+        var pageURL = makeURL(path: "/v1/analyticsReports/\(reportID)/instances", queryItems: queryItems)
+        var visitedURLs: Set<String> = []
+        while let currentPageURL = pageURL {
+            if visitedURLs.insert(currentPageURL.absoluteString).inserted == false {
+                break
+            }
+            let data = try await request(url: currentPageURL)
+            let response = try decoder.decode(ASCCollectionResponse<ASCAnalyticsReportInstanceResource>.self, from: data)
+            results.append(contentsOf: response.data.map {
+                ASCAnalyticsReportInstance(
+                    id: $0.id,
+                    granularity: $0.attributes?.granularity.flatMap(ASCAnalyticsGranularity.init(rawValue:)),
+                    processingDate: $0.attributes?.processingDate
+                )
+            })
+            if let nextLink = normalize(response.links?.next),
+               let nextPageURL = URL(string: nextLink, relativeTo: baseURL)?.absoluteURL {
+                pageURL = nextPageURL
+            } else {
+                pageURL = nil
+            }
+        }
+        return results
+    }
+
+    public func listAnalyticsReportSegments(instanceID: String) async throws -> [ASCAnalyticsReportSegment] {
+        let decoder = JSONDecoder()
+        var results: [ASCAnalyticsReportSegment] = []
+        var pageURL = makeURL(
+            path: "/v1/analyticsReportInstances/\(instanceID)/segments",
+            queryItems: [
+                URLQueryItem(name: "limit", value: "200"),
+                URLQueryItem(name: "fields[analyticsReportSegments]", value: "url,checksum,sizeInBytes")
+            ]
+        )
+        var visitedURLs: Set<String> = []
+        while let currentPageURL = pageURL {
+            if visitedURLs.insert(currentPageURL.absoluteString).inserted == false {
+                break
+            }
+            let data = try await request(url: currentPageURL)
+            let response = try decoder.decode(ASCCollectionResponse<ASCAnalyticsReportSegmentResource>.self, from: data)
+            results.append(contentsOf: response.data.map {
+                ASCAnalyticsReportSegment(
+                    id: $0.id,
+                    url: $0.attributes?.url.flatMap(URL.init(string:)),
+                    checksum: $0.attributes?.checksum,
+                    sizeInBytes: $0.attributes?.sizeInBytes
+                )
+            })
+            if let nextLink = normalize(response.links?.next),
+               let nextPageURL = URL(string: nextLink, relativeTo: baseURL)?.absoluteURL {
+                pageURL = nextPageURL
+            } else {
+                pageURL = nil
+            }
+        }
+        return results
+    }
+
+    public func download(url: URL) async throws -> Data {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = requestTimeout
+        request.setValue("*/*", forHTTPHeaderField: "Accept")
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw ASCClientError.network(error)
+        }
+        guard let http = response as? HTTPURLResponse else {
+            throw ASCClientError.httpStatus(-1, nil)
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw ASCClientError.httpStatus(http.statusCode, nil)
+        }
+        return data
+    }
+
     private func buildReviewResponseMap(
         included: [ASCIncludedResource]?
     ) -> [String: ASCLatestReviewDeveloperResponse] {
@@ -1260,6 +1498,47 @@ private struct ASCResolvedApp {
     let bundleID: String?
 }
 
+private struct ASCAnalyticsReportRequestResource: Decodable {
+    let id: String
+    let attributes: Attributes?
+
+    struct Attributes: Decodable {
+        let accessType: String?
+        let stoppedDueToInactivity: Bool?
+    }
+}
+
+private struct ASCAnalyticsReportResource: Decodable {
+    let id: String
+    let attributes: Attributes?
+
+    struct Attributes: Decodable {
+        let name: String?
+        let category: String?
+    }
+}
+
+private struct ASCAnalyticsReportInstanceResource: Decodable {
+    let id: String
+    let attributes: Attributes?
+
+    struct Attributes: Decodable {
+        let granularity: String?
+        let processingDate: String?
+    }
+}
+
+private struct ASCAnalyticsReportSegmentResource: Decodable {
+    let id: String
+    let attributes: Attributes?
+
+    struct Attributes: Decodable {
+        let checksum: String?
+        let sizeInBytes: Int?
+        let url: String?
+    }
+}
+
 private struct ASCAppResource: Decodable {
     let id: String
     let attributes: Attributes?
@@ -1378,6 +1657,33 @@ private struct ASCCustomerReviewResponseUpsertRequest: Encodable {
 
     struct ReviewData: Encodable {
         let type = "customerReviews"
+        let id: String
+    }
+}
+
+private struct ASCAnalyticsReportRequestCreateRequest: Encodable {
+    let data: DataPayload
+
+    struct DataPayload: Encodable {
+        let type = "analyticsReportRequests"
+        let attributes: Attributes
+        let relationships: Relationships
+    }
+
+    struct Attributes: Encodable {
+        let accessType: String
+    }
+
+    struct Relationships: Encodable {
+        let app: AppRelationship
+    }
+
+    struct AppRelationship: Encodable {
+        let data: AppData
+    }
+
+    struct AppData: Encodable {
+        let type = "apps"
         let id: String
     }
 }

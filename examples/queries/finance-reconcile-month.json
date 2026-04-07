@@ -1,7 +1,0 @@
-{
-  "kind": "snapshot",
-  "source": "finance",
-  "filters": {
-    "rangePreset": "last-month"
-  }
-}

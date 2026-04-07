@@ -18,23 +18,46 @@ import Foundation
 @testable import ACDAnalytics
 
 final class OutputRendererTests: XCTestCase {
-    func testJSONRenderForHealth() throws {
-        let rendered = try OutputRenderer.render(DataHealthSnapshot.empty, format: .json)
-        XCTAssertTrue(rendered.contains("\"confidence\""))
-    }
-
-    func testTableRenderForReviewsSummary() throws {
+    func testTableRenderUsesQueryResultTableModel() throws {
         let rendered = try OutputRenderer.render(
-            ReviewsSummarySnapshot(
-                total: 1,
-                averageRating: 5,
-                histogram: [5: 1],
-                byTerritory: [],
-                unresolvedResponses: 1,
-                latestDate: nil
+            QueryResult(
+                dataset: .brief,
+                operation: .brief,
+                time: QueryTimeEnvelope(label: "last week", startDatePT: "2026-02-10", endDatePT: "2026-02-16"),
+                filters: QueryFilterSet(),
+                source: ["summary-sales"],
+                data: QueryResultData(brief: [
+                    BriefRow(metric: "Sales proceeds", current: "$120.00", compare: "$100.00", change: "20.00%", note: "up")
+                ]),
+                tableModel: TableModel(
+                    columns: ["metric", "current", "compare", "change", "note"],
+                    rows: [["Sales proceeds", "$120.00", "$100.00", "20.00%", "up"]]
+                )
             ),
             format: .table
         )
-        XCTAssertTrue(rendered.contains("averageRating"))
+
+        XCTAssertTrue(rendered.contains("metric"))
+        XCTAssertTrue(rendered.contains("Sales proceeds"))
+    }
+
+    func testMarkdownRenderForCapabilities() throws {
+        let rendered = try OutputRenderer.render(
+            [
+                CapabilityDescriptor(
+                    name: "sales",
+                    status: "included",
+                    whatYouCanQuery: ["Summary Sales"],
+                    whatYouCannotQuery: ["User profiles"],
+                    timeSupport: ["date"],
+                    filterSupport: ["app", "territory"],
+                    notes: ["Apple-only"]
+                )
+            ],
+            format: .markdown
+        )
+
+        XCTAssertTrue(rendered.contains("# Capabilities"))
+        XCTAssertTrue(rendered.contains("`sales`"))
     }
 }

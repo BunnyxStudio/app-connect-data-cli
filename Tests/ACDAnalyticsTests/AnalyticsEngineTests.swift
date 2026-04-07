@@ -18,96 +18,158 @@ import Foundation
 @testable import ACDCore
 
 final class AnalyticsEngineTests: XCTestCase {
-    func testSalesSnapshotAndReviewsSummaryFromCache() async throws {
-        let temp = try makeTempDirectory()
-        let cacheStore = CacheStore(rootDirectory: temp.appendingPathComponent(".app-connect-data-cli/cache", isDirectory: true))
-        try cacheStore.prepare()
-
-        let salesFile = cacheStore.reportsDirectory.appendingPathComponent("sales.tsv")
-        try LocalFileSecurity.writePrivateData(Data(sampleSalesTSV.utf8), to: salesFile)
-        let salesReport = DownloadedReport(
+    func testSalesAggregateFromSubscriptionFixture() async throws {
+        let cacheStore = try makeCacheStore()
+        try recordReport(
+            cacheStore: cacheStore,
+            filename: "subscription_2026-02-18.tsv",
             source: .sales,
-            reportType: "SALES",
+            reportType: "SUBSCRIPTION",
             reportSubType: "SUMMARY",
-            queryHash: "sales-sample",
             reportDateKey: "2026-02-18",
-            vendorNumber: "123",
-            fileURL: salesFile,
-            rawText: sampleSalesTSV
+            text: try fixture(named: "subscription_2026-02-18.tsv")
         )
-        _ = try cacheStore.record(report: salesReport)
 
-        let financeFile = cacheStore.reportsDirectory.appendingPathComponent("finance.tsv")
-        try LocalFileSecurity.writePrivateData(Data(sampleFinanceTSV.utf8), to: financeFile)
-        let financeReport = DownloadedReport(
-            source: .finance,
-            reportType: "FINANCIAL",
-            reportSubType: "ZZ",
-            queryHash: "finance-sample",
-            reportDateKey: "2026-02-FINANCIAL-ZZ",
-            vendorNumber: "123",
-            fileURL: financeFile,
-            rawText: sampleFinanceTSV
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+        let result = try await engine.execute(
+            spec: DataQuerySpec(
+                dataset: .sales,
+                operation: .aggregate,
+                time: QueryTimeSelection(datePT: "2026-02-18"),
+                filters: QueryFilterSet(sourceReport: ["subscription"])
+            ),
+            offline: true
         )
-        _ = try cacheStore.record(report: financeReport)
 
+        let row = try XCTUnwrap(result.data.aggregates.first)
+        XCTAssertEqual(result.dataset, .sales)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["subscribers"]), 75, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["activeSubscriptions"]), 409, accuracy: 0.0001)
+    }
+
+    func testReviewsCompareSupportsCustomWindow() async throws {
+        let cacheStore = try makeCacheStore()
         try cacheStore.saveReviews(
             CachedReviewsPayload(
                 fetchedAt: Date(),
                 reviews: [
-                    ASCLatestReview(
-                        id: "r1",
-                        appID: "a1",
-                        appName: "Hive",
-                        bundleID: nil,
-                        rating: 5,
-                        title: "Great",
-                        body: "Works well",
-                        reviewerNickname: "A",
-                        territory: "US",
-                        createdDate: try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: "2026-02-18")),
-                        developerResponse: nil
-                    )
+                    makeReview(id: "r1", date: "2026-02-18", rating: 5, responded: true),
+                    makeReview(id: "r2", date: "2026-02-18", rating: 1, responded: false),
+                    makeReview(id: "r3", date: "2026-02-17", rating: 4, responded: false)
                 ]
             )
         )
 
-        let fx = FXRateService(cacheURL: cacheStore.fxCacheURL)
-        let engine = AnalyticsEngine(cacheStore: cacheStore, fxService: fx)
-
-        let snapshot = try await engine.snapshot(
-            source: .sales,
-            filters: QueryFilters(startDatePT: "2026-02-18", endDatePT: "2026-02-18")
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+        let result = try await engine.execute(
+            spec: DataQuerySpec(
+                dataset: .reviews,
+                operation: .compare,
+                time: QueryTimeSelection(datePT: "2026-02-18"),
+                compare: .custom,
+                compareTime: QueryTimeSelection(datePT: "2026-02-17")
+            ),
+            offline: true
         )
-        XCTAssertEqual(snapshot.totalPurchases, 1, accuracy: 0.0001)
-        XCTAssertEqual(snapshot.totalInstalls, 3, accuracy: 0.0001)
 
-        let reviewsSummary = try engine.reviewsSummary()
-        XCTAssertEqual(reviewsSummary.total, 1)
-        XCTAssertEqual(reviewsSummary.averageRating, 5, accuracy: 0.0001)
-
-        let modules = try await engine.modules(filters: QueryFilters(startDatePT: "2026-02-18", endDatePT: "2026-02-18"))
-        XCTAssertGreaterThanOrEqual(modules.overview.salesBookingUSD, 0)
+        let row = try XCTUnwrap(result.data.comparisons.first)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["count"]?.current), 2, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["count"]?.previous), 1, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["averageRating"]?.current), 3, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(row.metrics["averageRating"]?.previous), 4, accuracy: 0.0001)
     }
 
-    private func makeTempDirectory() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+    func testFinanceAggregateFromFixture() async throws {
+        let cacheStore = try makeCacheStore()
+        try recordReport(
+            cacheStore: cacheStore,
+            filename: "finance_detail_z1_2025-11.tsv",
+            source: .finance,
+            reportType: "FINANCE_DETAIL",
+            reportSubType: "Z1",
+            reportDateKey: "2025-11-FINANCE_DETAIL-Z1",
+            text: try fixture(named: "finance_detail_z1_2026-02.tsv")
+        )
+
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+        let result = try await engine.execute(
+            spec: DataQuerySpec(
+                dataset: .finance,
+                operation: .aggregate,
+                time: QueryTimeSelection(fiscalMonth: "2025-11"),
+                filters: QueryFilterSet(sourceReport: ["finance-detail"]),
+                groupBy: [.territory]
+            ),
+            offline: true
+        )
+
+        XCTAssertEqual(result.dataset, .finance)
+        XCTAssertFalse(result.data.aggregates.isEmpty)
+        XCTAssertTrue(result.data.aggregates.contains { $0.group["territory"] == "CN" })
     }
 
-    private var sampleSalesTSV: String {
-        """
-        Begin Date\tEnd Date\tTitle\tSKU\tParent Identifier\tProduct Type Identifier\tUnits\tDeveloper Proceeds\tCurrency of Proceeds\tCountry Code\tDevice\tApple Identifier\tVersion\tOrder Type\tProceeds Reason\tSupported Platforms\tCustomer Price\tCustomer Currency
-        2026-02-18\t2026-02-18\tHive App\thive.app\t\t1F\t3\t0\tUSD\tUS\tiPhone\t123\t1.0\t\t\tios\t0\tUSD
-        2026-02-18\t2026-02-18\tPro Monthly\tpro.monthly\thive.app\tIAY\t1\t9.99\tUSD\tUS\tiPhone\t124\t1.0\t\t\tios\t9.99\tUSD
-        """
+    private func makeCacheStore() throws -> CacheStore {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(".app-connect-data-cli/cache", isDirectory: true)
+        let cacheStore = CacheStore(rootDirectory: root)
+        try cacheStore.prepare()
+        return cacheStore
     }
 
-    private var sampleFinanceTSV: String {
-        """
-        Start Date\tEnd Date\tSKU\tCountry of Sale\tPartner Share\tExtended Partner Share\tUnits\tCurrency of Proceeds\tApple Identifier
-        2026-02-01\t2026-02-28\tpro.monthly\tUS\t9.99\t9.99\t1\tUSD\t124
-        """
+    private func recordReport(
+        cacheStore: CacheStore,
+        filename: String,
+        source: ReportSource,
+        reportType: String,
+        reportSubType: String,
+        reportDateKey: String,
+        text: String
+    ) throws {
+        let fileURL = cacheStore.reportsDirectory.appendingPathComponent(filename)
+        try LocalFileSecurity.writePrivateData(Data(text.utf8), to: fileURL)
+        _ = try cacheStore.record(
+            report: DownloadedReport(
+                source: source,
+                reportType: reportType,
+                reportSubType: reportSubType,
+                queryHash: filename,
+                reportDateKey: reportDateKey,
+                vendorNumber: "TEST_VENDOR",
+                fileURL: fileURL,
+                rawText: text
+            )
+        )
+    }
+
+    private func makeReview(id: String, date: String, rating: Int, responded: Bool) throws -> ASCLatestReview {
+        ASCLatestReview(
+            id: id,
+            appID: "6502647802",
+            appName: "Hive",
+            bundleID: "studio.bunny.hive",
+            rating: rating,
+            title: "Review \(id)",
+            body: "Body \(id)",
+            reviewerNickname: "tester",
+            territory: "US",
+            createdDate: try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: date)),
+            developerResponse: responded ? ASCLatestReviewDeveloperResponse(
+                id: "response-\(id)",
+                body: "Thanks",
+                lastModifiedDate: try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: date)),
+                state: "PUBLISHED"
+            ) : nil
+        )
+    }
+
+    private func fixture(named name: String) throws -> String {
+        let path = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures", isDirectory: true)
+            .appendingPathComponent(name)
+        return try String(contentsOf: path, encoding: .utf8)
     }
 }

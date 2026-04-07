@@ -1,68 +1,117 @@
 # Query Spec
 
-`app-connect-data-cli query run --spec <file|->` 接收 JSON。
+`app-connect-data-cli query run --spec <file|->` accepts a `DataQuerySpec` JSON payload.
 
-## Schema
+## Example
 
 ```json
 {
-  "kind": "snapshot",
-  "source": "sales",
+  "dataset": "sales",
+  "operation": "aggregate",
+  "time": {
+    "rangePreset": "last-week"
+  },
+  "compare": "previous-period",
   "filters": {
-    "rangePreset": "last-week",
-    "territory": "US",
-    "device": "iPhone",
-    "limit": 10
-  }
+    "territory": ["US", "CA"],
+    "sourceReport": ["summary-sales"]
+  },
+  "groupBy": ["territory", "version"]
 }
 ```
 
-## `kind`
+## Fields
 
-- `snapshot`
-- `modules`
-- `health`
-- `trend`
-- `top-products`
-- `reviews.list`
-- `reviews.summary`
-
-## `source`
-
-只对这些 `kind` 生效：
-
-- `snapshot`
-- `trend`
-- `top-products`
-
-可选值：
+### `dataset`
 
 - `sales`
+- `reviews`
 - `finance`
+- `analytics`
+- `brief`
 
-默认值：
+### `operation`
 
-- `sales`
+- `records`
+- `aggregate`
+- `compare`
+- `brief`
 
-## `filters`
+### `time`
 
-时间字段三选一：
+Supported keys:
 
-- `datePT`: `YYYY-MM-DD`
-- `startDatePT` + `endDatePT`
+- `datePT`
+- `startDatePT`
+- `endDatePT`
 - `rangePreset`
+- `year`
+- `fiscalMonth`
+- `fiscalYear`
 
-其他字段：
+Supported presets:
 
+- `last-day`
+- `last-7d`
+- `last-week`
+- `last-30d`
+- `last-month`
+- `year-to-date`
+- `previous-week`
+- `previous-month`
+
+### `compare`
+
+- `previous-period`
+- `week-over-week`
+- `month-over-month`
+- `year-over-year`
+- `custom`
+
+### `compareTime`
+
+Use only with `compare: "custom"`.
+
+### `filters`
+
+Supported keys:
+
+- `app`
+- `version`
+- `territory`
+- `currency`
+- `device`
+- `sku`
+- `subscription`
+- `platform`
+- `sourceReport`
+- `rating`
+- `responseState`
+
+### `groupBy`
+
+Supported values:
+
+- `day`
+- `week`
+- `month`
+- `fiscalMonth`
+- `app`
+- `version`
 - `territory`
 - `device`
-- `limit`
+- `sku`
+- `rating`
+- `responseState`
+- `reportType`
+- `platform`
+- `sourceReport`
+- `subscription`
 
-## 示例
+## Examples
 
-见：
-
-- [`examples/queries/snapshot-30d.json`](../examples/queries/snapshot-30d.json)
-- [`examples/queries/finance-reconcile-month.json`](../examples/queries/finance-reconcile-month.json)
-- [`examples/queries/reviews-summary.json`](../examples/queries/reviews-summary.json)
-- [`examples/queries/top-products-us.json`](../examples/queries/top-products-us.json)
+- [`examples/queries/sales-aggregate-last-week.json`](../examples/queries/sales-aggregate-last-week.json)
+- [`examples/queries/reviews-compare-last-week.json`](../examples/queries/reviews-compare-last-week.json)
+- [`examples/queries/finance-aggregate-month.json`](../examples/queries/finance-aggregate-month.json)
+- [`examples/queries/analytics-records-last-week.json`](../examples/queries/analytics-records-last-week.json)
+- [`examples/queries/brief-weekly.json`](../examples/queries/brief-weekly.json)

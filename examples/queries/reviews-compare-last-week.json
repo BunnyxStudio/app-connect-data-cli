@@ -1,0 +1,19 @@
+{
+  "dataset": "reviews",
+  "operation": "compare",
+  "time": {
+    "rangePreset": "last-week"
+  },
+  "compare": "previous-period",
+  "filters": {
+    "rating": [
+      1,
+      2,
+      3
+    ]
+  },
+  "groupBy": [
+    "rating",
+    "territory"
+  ]
+}

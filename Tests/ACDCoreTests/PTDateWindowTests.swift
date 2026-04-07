@@ -24,11 +24,11 @@ final class PTDateWindowTests: XCTestCase {
         XCTAssertEqual(window.endDatePT, "2026-04-06")
     }
 
-    func testLastWeekPresetResolvesToPreviousSevenDays() throws {
+    func testLastWeekPresetResolvesToPreviousCompleteWeek() throws {
         let reference = try XCTUnwrap(DateFormatter.ptDateFormatter.date(from: "2026-04-07"))
         let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "last-week", defaultPreset: nil, reference: reference))
-        XCTAssertEqual(window.startDatePT, "2026-03-31")
-        XCTAssertEqual(window.endDatePT, "2026-04-06")
+        XCTAssertEqual(window.startDatePT, "2026-03-30")
+        XCTAssertEqual(window.endDatePT, "2026-04-05")
     }
 
     func testFullFiscalMonthsAndDailyDatesSplitWindow() throws {

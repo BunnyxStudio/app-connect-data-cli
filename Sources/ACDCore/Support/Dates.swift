@@ -82,15 +82,14 @@ public enum PTDateWindowError: LocalizedError, Equatable, Sendable {
 }
 
 public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
-    case today
     case lastDay = "last-day"
-    case yesterday
     case lastWeek = "last-week"
     case last7d = "last-7d"
     case last30d = "last-30d"
-    case thisWeek = "this-week"
-    case thisMonth = "this-month"
     case lastMonth = "last-month"
+    case yearToDate = "year-to-date"
+    case previousWeek = "previous-week"
+    case previousMonth = "previous-month"
 
     public init?(userInput: String) {
         let normalized = userInput
@@ -99,24 +98,22 @@ public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
             .replacingOccurrences(of: "_", with: "-")
             .replacingOccurrences(of: " ", with: "-")
         switch normalized {
-        case "today":
-            self = .today
-        case "last-day", "lastday":
+        case "last-day", "lastday", "yesterday":
             self = .lastDay
-        case "yesterday":
-            self = .yesterday
         case "last-week", "lastweek":
             self = .lastWeek
         case "last-7d", "7d", "last7d":
             self = .last7d
         case "last-30d", "30d", "last30d":
             self = .last30d
-        case "this-week", "thisweek":
-            self = .thisWeek
-        case "this-month", "thismonth":
-            self = .thisMonth
         case "last-month", "lastmonth":
             self = .lastMonth
+        case "year-to-date", "ytd", "year2date":
+            self = .yearToDate
+        case "previous-week", "prev-week":
+            self = .previousWeek
+        case "previous-month", "prev-month":
+            self = .previousMonth
         default:
             return nil
         }
@@ -125,33 +122,36 @@ public enum PTDateRangePreset: String, CaseIterable, Codable, Sendable {
     public func resolve(reference: Date = Date()) -> PTDateWindow {
         let calendar = Calendar.pacific
         let today = calendar.startOfDay(for: reference)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        let currentWeek = calendar.dateInterval(of: .weekOfYear, for: today)
+        let currentMonth = calendar.dateInterval(of: .month, for: today)
 
         switch self {
-        case .today:
-            return PTDateWindow(startDate: today, endDate: today)
-        case .lastDay, .yesterday:
-            let day = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-            return PTDateWindow(startDate: day, endDate: day)
-        case .lastWeek, .last7d:
-            let end = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        case .lastDay:
+            return PTDateWindow(startDate: yesterday, endDate: yesterday)
+        case .lastWeek, .previousWeek:
+            let currentWeekStart = currentWeek?.start ?? today
+            let previousWeekEnd = calendar.date(byAdding: .day, value: -1, to: currentWeekStart) ?? yesterday
+            let previousWeekStart = calendar.dateInterval(of: .weekOfYear, for: previousWeekEnd)?.start ?? previousWeekEnd
+            return PTDateWindow(startDate: previousWeekStart, endDate: previousWeekEnd)
+        case .last7d:
+            let end = yesterday
             let start = calendar.date(byAdding: .day, value: -6, to: end) ?? end
             return PTDateWindow(startDate: start, endDate: end)
         case .last30d:
-            let end = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+            let end = yesterday
             let start = calendar.date(byAdding: .day, value: -29, to: end) ?? end
             return PTDateWindow(startDate: start, endDate: end)
-        case .thisWeek:
-            let weekInterval = calendar.dateInterval(of: .weekOfYear, for: today)
-            return PTDateWindow(startDate: weekInterval?.start ?? today, endDate: today)
-        case .thisMonth:
-            let monthInterval = calendar.dateInterval(of: .month, for: today)
-            return PTDateWindow(startDate: monthInterval?.start ?? today, endDate: today)
-        case .lastMonth:
-            let currentMonthStart = calendar.dateInterval(of: .month, for: today)?.start ?? today
+        case .lastMonth, .previousMonth:
+            let currentMonthStart = currentMonth?.start ?? today
             let lastMonthReference = calendar.date(byAdding: .day, value: -1, to: currentMonthStart) ?? today
             let monthInterval = calendar.dateInterval(of: .month, for: lastMonthReference)
             let start = monthInterval?.start ?? lastMonthReference
             let end = calendar.date(byAdding: .day, value: -1, to: monthInterval?.end ?? currentMonthStart) ?? lastMonthReference
+            return PTDateWindow(startDate: start, endDate: end)
+        case .yearToDate:
+            let start = calendar.date(from: calendar.dateComponents([.year], from: today)) ?? today
+            let end = max(start, yesterday)
             return PTDateWindow(startDate: start, endDate: end)
         }
     }
@@ -213,6 +213,19 @@ public func resolvePTDateWindow(
         return defaultPreset.resolve(reference: reference)
     }
     return nil
+}
+
+public func calendarYearWindow(year: Int) -> PTDateWindow {
+    let calendar = Calendar.pacific
+    let start = DateFormatter.ptDateFormatter.date(from: String(format: "%04d-01-01", year)) ?? Date()
+    let end = DateFormatter.ptDateFormatter.date(from: String(format: "%04d-12-31", year)) ?? start
+    return PTDateWindow(startDate: calendar.startOfDay(for: start), endDate: calendar.startOfDay(for: end))
+}
+
+public func fiscalYearMonths(_ fiscalYear: Int) -> [String] {
+    (1...12).map { month in
+        String(format: "%04d-%02d", fiscalYear, month)
+    }
 }
 
 public func fullFiscalMonthsContained(in window: PTDateWindow) -> [String] {

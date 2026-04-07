@@ -1,7 +1,0 @@
-{
-  "kind": "snapshot",
-  "source": "sales",
-  "filters": {
-    "rangePreset": "last-30d"
-  }
-}

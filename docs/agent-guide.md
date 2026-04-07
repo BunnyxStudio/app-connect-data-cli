@@ -1,62 +1,77 @@
 # Agent Guide
 
-推荐只走这一条：
+The stable agent interface is:
 
 ```bash
 app-connect-data-cli query run --spec <file|-> --output json
 ```
 
-原因：
+## Recommended flow
 
-- 入口稳定
-- 输出结构稳定
-- 时间范围可以直接写在 spec 里
-- 不需要先手动 `sync`
+1. Build one `DataQuerySpec` JSON payload.
+2. Pass it to `query run`.
+3. Read the JSON response.
+4. Treat `warnings` as real result data.
 
-## 推荐流程
-
-1. 生成一个 JSON spec
-2. 直接调用 `query run --spec`
-3. 默认让 CLI 自己按需拉数据
-4. 只有明确要求离线时才加 `--offline`
-
-## 示例
-
-### health
+## Canonical JSON shape
 
 ```json
 {
-  "kind": "health",
-  "filters": {}
-}
-```
-
-### snapshot
-
-```json
-{
-  "kind": "snapshot",
-  "source": "sales",
-  "filters": {
-    "rangePreset": "last-week",
-    "territory": "US"
-  }
-}
-```
-
-### reviews summary
-
-```json
-{
-  "kind": "reviews.summary",
-  "filters": {
+  "dataset": "sales",
+  "operation": "aggregate",
+  "time": {
     "rangePreset": "last-week"
-  }
+  },
+  "compare": "previous-period",
+  "filters": {
+    "territory": ["US", "CA"],
+    "sourceReport": ["summary-sales"]
+  },
+  "groupBy": ["territory", "version"]
 }
 ```
 
-## 注意
+## Supported datasets
 
-- `query` 和 `reviews` 默认会在有凭据时自动补齐所需数据
-- `--offline` 才是纯本地读取
-- `reviews respond` 一直需要 ASC 凭据
+- `sales`
+- `reviews`
+- `finance`
+- `analytics`
+- `brief`
+
+## Supported operations
+
+- `records`
+- `aggregate`
+- `compare`
+- `brief`
+
+## Time fields
+
+- `datePT`
+- `startDatePT`
+- `endDatePT`
+- `rangePreset`
+- `year`
+- `fiscalMonth`
+- `fiscalYear`
+
+## Comparison fields
+
+- `compare`
+- `compareTime`
+
+Supported comparison modes:
+
+- `previous-period`
+- `week-over-week`
+- `month-over-month`
+- `year-over-year`
+- `custom`
+
+## Notes
+
+- Use `--offline` only for cache-only reads.
+- Use `--refresh` only when you need a fresh Apple fetch.
+- Analytics queries may create an Apple report request on first use.
+- Analytics responses may include privacy and completeness warnings.

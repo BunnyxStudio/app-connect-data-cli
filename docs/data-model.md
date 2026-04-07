@@ -1,71 +1,105 @@
 # Data Model
 
-## Raw inputs
+All public query commands map to one shared model.
 
-- `SALES/SUMMARY`
-- `SALES/SUMMARY_MONTHLY`
-- `SUBSCRIPTION/SUMMARY`
-- `SUBSCRIPTION_EVENT/SUMMARY`
-- `SUBSCRIBER/DETAILED`
-- `FINANCIAL/ZZ`
-- `FINANCE_DETAIL/Z1`
-- customer reviews
+## Request
 
-## Time model
+```json
+{
+  "dataset": "sales",
+  "operation": "aggregate",
+  "time": {
+    "rangePreset": "last-week"
+  },
+  "compare": "previous-period",
+  "compareTime": null,
+  "filters": {
+    "territory": ["US", "CA"],
+    "sourceReport": ["summary-sales"]
+  },
+  "groupBy": ["territory", "version"],
+  "limit": null
+}
+```
 
-所有日级时间都按 PT。
+## Core fields
 
-用户可以用三种方式给时间：
+- `dataset`
+- `operation`
+- `time`
+- `compare`
+- `compareTime`
+- `filters`
+- `groupBy`
+- `limit`
+
+## Datasets
+
+- `sales`
+- `reviews`
+- `finance`
+- `analytics`
+- `brief`
+
+## Operations
+
+- `records`
+- `aggregate`
+- `compare`
+- `brief`
+
+## Time fields
 
 - `datePT`
-- `startDatePT` + `endDatePT`
+- `startDatePT`
+- `endDatePT`
 - `rangePreset`
+- `year`
+- `fiscalMonth`
+- `fiscalYear`
 
-`rangePreset` 支持：
+## Filters
 
-- `today`
-- `last-day`
-- `last-week`
-- `last-7d`
-- `last-30d`
-- `this-week`
-- `this-month`
-- `last-month`
+- `app`
+- `version`
+- `territory`
+- `currency`
+- `device`
+- `sku`
+- `subscription`
+- `platform`
+- `sourceReport`
+- `rating`
+- `responseState`
 
-## Core outputs
+## Grouping
 
-### `DashboardSnapshot`
+- `day`
+- `week`
+- `month`
+- `fiscalMonth`
+- `app`
+- `version`
+- `territory`
+- `device`
+- `sku`
+- `rating`
+- `responseState`
+- `reportType`
+- `platform`
+- `sourceReport`
+- `subscription`
 
-- units
-- installs
-- purchases
-- refunds
-- proceeds by currency
-- trend
-- top products
+## Response
 
-### `DashboardModuleSnapshot`
+Every result returns:
 
-- overview
-- growth
-- subscription
-- finance
-- dataHealth
-
-### `DataHealthSnapshot`
-
-- sales as-of
-- subscription as-of
-- finance as-of
-- coverage counts
-- lag counts
-- confidence
-- issues
-
-### `ReviewsSummarySnapshot`
-
-- total
-- average rating
-- histogram
-- territory breakdown
-- unresolved responses
+- `dataset`
+- `operation`
+- `time`
+- `filters`
+- `source`
+- `data`
+- `comparison`
+- `warnings`
+- `tableModel`

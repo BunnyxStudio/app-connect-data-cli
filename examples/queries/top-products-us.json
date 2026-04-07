@@ -1,9 +1,0 @@
-{
-  "kind": "top-products",
-  "source": "sales",
-  "filters": {
-    "rangePreset": "last-30d",
-    "territory": "US",
-    "limit": 10
-  }
-}

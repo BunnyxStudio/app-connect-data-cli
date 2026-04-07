@@ -1,0 +1,21 @@
+{
+  "dataset": "finance",
+  "operation": "aggregate",
+  "time": {
+    "fiscalMonth": "2026-02"
+  },
+  "filters": {
+    "territory": [
+      "US",
+      "JP"
+    ],
+    "sourceReport": [
+      "finance-detail"
+    ]
+  },
+  "groupBy": [
+    "territory",
+    "currency",
+    "sourceReport"
+  ]
+}

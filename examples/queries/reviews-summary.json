@@ -1,6 +1,0 @@
-{
-  "kind": "reviews.summary",
-  "filters": {
-    "rangePreset": "last-week"
-  }
-}

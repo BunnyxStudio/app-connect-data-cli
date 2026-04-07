@@ -91,10 +91,7 @@ enum RuntimeFactory {
         let config = try resolveConfig(paths: paths, overrides: overrides)
         let cacheStore = CacheStore(rootDirectory: cacheRoot)
         try cacheStore.prepare()
-        let analytics = AnalyticsEngine(
-            cacheStore: cacheStore,
-            fxService: FXRateService(cacheURL: cacheStore.fxCacheURL)
-        )
+
         if credentialsMode == .disabled {
             return RuntimeContext(
                 config: config,
@@ -104,7 +101,7 @@ enum RuntimeFactory {
                 client: nil,
                 downloader: nil,
                 syncService: nil,
-                analytics: analytics
+                analytics: AnalyticsEngine(cacheStore: cacheStore)
             )
         }
 
@@ -122,7 +119,7 @@ enum RuntimeFactory {
                 client: nil,
                 downloader: nil,
                 syncService: nil,
-                analytics: analytics
+                analytics: AnalyticsEngine(cacheStore: cacheStore)
             )
         }
 
@@ -147,6 +144,12 @@ enum RuntimeFactory {
             reportsRootDirectoryURL: cacheStore.reportsDirectory
         )
         let syncService = SyncService(cacheStore: cacheStore, downloader: downloader, client: client)
+        let analytics = AnalyticsEngine(
+            cacheStore: cacheStore,
+            syncService: syncService,
+            client: client,
+            downloader: downloader
+        )
         return RuntimeContext(
             config: config,
             credentials: credentials,
@@ -183,8 +186,6 @@ enum RuntimeFactory {
         guard let p8Path = config.p8Path else { throw SetupValidationError.missingP8 }
         let url = URL(fileURLWithPath: p8Path)
         try LocalFileSecurity.validateOwnerOnlyFile(url)
-        // The .p8 content is loaded from the user-provided file only for local signing.
-        // It is never written into config, cache, or any project-managed file.
         return try P8Importer().loadPrivateKeyPEM(from: url)
     }
 
@@ -193,29 +194,4 @@ enum RuntimeFactory {
             value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
     }
-}
-
-func parsePTDateInput(_ value: String) throws -> Date {
-    if let date = PTDate(value).date {
-        return date
-    }
-    throw PTDateWindowError.invalidDate(value)
-}
-
-func recentPTDates(days: Int, endingAt reference: Date = Date()) -> [Date] {
-    let clamped = max(1, days)
-    let calendar = Calendar.pacific
-    let today = calendar.startOfDay(for: reference)
-    return (0..<clamped).compactMap { offset in
-        calendar.date(byAdding: .day, value: -offset - 1, to: today)
-    }.sorted()
-}
-
-func recentFiscalMonths(count: Int, reference: Date = Date()) -> [String] {
-    let clamped = max(1, count)
-    let calendar = Calendar.pacific
-    let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: reference)) ?? reference
-    return (0..<clamped).compactMap { offset in
-        calendar.date(byAdding: .month, value: -offset, to: monthStart)?.fiscalMonthString
-    }.sorted()
 }

@@ -1,43 +1,46 @@
 # Cache And Config
 
-## 配置加载顺序
+## Config resolution
 
-1. flags
-2. environment variables
+The CLI loads credentials in this order:
+
+1. Flags
+2. Environment variables
 3. `./.app-connect-data-cli/config.json`
 4. `~/.app-connect-data-cli/config.json`
 
-## 支持的环境变量
+## Supported environment variables
 
 - `ASC_ISSUER_ID`
 - `ASC_KEY_ID`
 - `ASC_VENDOR_NUMBER`
 - `ASC_P8_PATH`
 
-## cache 位置
+## Local paths
 
-- repo-local: `./.app-connect-data-cli/cache/`
-- user-level: `~/.app-connect-data-cli/cache/`
+- Repo-local base: `./.app-connect-data-cli/`
+- User-level base: `~/.app-connect-data-cli/`
 
-CLI 会优先使用当前仓库里的 repo-local 目录。
-没有时再回退到用户级目录。
+The CLI prefers the repo-local path when it exists.
+Otherwise it falls back to the user-level path.
 
-## cache 内容
+## Cache contents
 
 - `reports/`
 - `manifest.json`
 - `reviews/latest.json`
-- `fx-rates.json`
 
-## cache 语义
+Analytics report downloads are stored locally as Apple returns them.
 
-- cache 是内部实现
-- 默认查询会优先复用已有文件
-- `--refresh` 会强制重新拉取
-- `--offline` 会禁止联网
+## Security rules
 
-## 清理 cache
+- `.p8` stays on the local machine
+- Config and cache files must be owner-only
+- The CLI should refuse unsafe files instead of silently relaxing permissions
+- No config value should be echoed back in plain text
 
-```bash
-app-connect-data-cli cache clear
-```
+## User controls
+
+- `--offline` reads local cache only
+- `--refresh` re-fetches raw data from Apple
+- `cache clear` removes local cache only

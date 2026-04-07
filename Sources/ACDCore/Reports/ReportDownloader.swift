@@ -121,6 +121,29 @@ public final class ReportDownloader: ReportDownloaderProtocol {
         return try await fetchSalesReport(query: query, reportDateKey: dateKey, cachePolicy: cachePolicy)
     }
 
+    public func fetchPreOrderDaily(datePT: Date?, cachePolicy: ReportCachePolicy) async throws -> DownloadedReport {
+        let credentials = try credentialsProvider()
+        let dateKey = datePT?.ptDateString ?? "latest"
+        let query = SalesReportQuery.preOrder(
+            vendorNumber: credentials.vendorNumber,
+            reportDate: datePT?.ptDateString
+        )
+        return try await fetchSalesReport(query: query, reportDateKey: dateKey, cachePolicy: cachePolicy)
+    }
+
+    public func fetchSubscriptionOfferCodeRedemptionDaily(
+        datePT: Date?,
+        cachePolicy: ReportCachePolicy
+    ) async throws -> DownloadedReport {
+        let credentials = try credentialsProvider()
+        let dateKey = datePT?.ptDateString ?? "latest"
+        let query = SalesReportQuery.subscriptionOfferCodeRedemption(
+            vendorNumber: credentials.vendorNumber,
+            reportDate: datePT?.ptDateString
+        )
+        return try await fetchSalesReport(query: query, reportDateKey: dateKey, cachePolicy: cachePolicy)
+    }
+
     public func fetchFinanceMonth(
         fiscalMonth: String,
         reportType: FinanceReportType,
@@ -146,6 +169,29 @@ public final class ReportDownloader: ReportDownloaderProtocol {
             cachePolicy: cachePolicy
         ) {
             try await client.downloadFinanceReport(query: query)
+        }
+    }
+
+    public func fetchAnalyticsSegment(
+        segment: ASCAnalyticsReportSegment,
+        reportName: String,
+        reportDateKey: String,
+        cachePolicy: ReportCachePolicy
+    ) async throws -> DownloadedReport {
+        guard let url = segment.url else {
+            throw ReportDownloaderError.invalidText
+        }
+        let queryHash = (segment.checksum ?? segment.id).sha256Hex
+        return try await fetch(
+            source: .analytics,
+            reportType: reportName,
+            reportSubType: "SEGMENT",
+            reportDateKey: reportDateKey,
+            queryHash: queryHash,
+            vendorNumber: "",
+            cachePolicy: cachePolicy
+        ) {
+            try await client.download(url: url)
         }
     }
 

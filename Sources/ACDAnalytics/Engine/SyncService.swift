@@ -69,6 +69,47 @@ public final class SyncService {
         )
     }
 
+    public func syncSalesReports(
+        window: PTDateWindow,
+        reportFamilies: [SalesReportFamily],
+        force: Bool
+    ) async throws -> SyncSummary {
+        let requested = reportFamilies.isEmpty ? [SalesReportFamily.summarySales] : reportFamilies
+        let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
+        var records: [CachedReportRecord] = []
+
+        if requested.contains(.summarySales) {
+            let summary = try await syncSales(window: window, force: force)
+            records.append(contentsOf: summary.records)
+        }
+
+        let dates = ptDates(in: window)
+        for date in dates {
+            if requested.contains(.subscription) {
+                let report = try await downloader.fetchSubscriptionDaily(datePT: date, cachePolicy: policy)
+                records.append(try cacheStore.record(report: report))
+            }
+            if requested.contains(.subscriptionEvent) {
+                let report = try await downloader.fetchSubscriptionEventDaily(datePT: date, cachePolicy: policy)
+                records.append(try cacheStore.record(report: report))
+            }
+            if requested.contains(.subscriber) {
+                let report = try await downloader.fetchSubscriberDaily(datePT: date, cachePolicy: policy)
+                records.append(try cacheStore.record(report: report))
+            }
+            if requested.contains(.preOrder) {
+                let report = try await downloader.fetchPreOrderDaily(datePT: date, cachePolicy: policy)
+                records.append(try cacheStore.record(report: report))
+            }
+            if requested.contains(.subscriptionOfferRedemption) {
+                let report = try await downloader.fetchSubscriptionOfferCodeRedemptionDaily(datePT: date, cachePolicy: policy)
+                records.append(try cacheStore.record(report: report))
+            }
+        }
+
+        return SyncSummary(records: records)
+    }
+
     public func syncSubscriptions(
         dates: [Date],
         force: Bool

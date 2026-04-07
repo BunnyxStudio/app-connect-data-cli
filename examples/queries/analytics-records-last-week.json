@@ -1,0 +1,16 @@
+{
+  "dataset": "analytics",
+  "operation": "records",
+  "time": {
+    "rangePreset": "last-week"
+  },
+  "filters": {
+    "app": [
+      "6502647802"
+    ],
+    "sourceReport": [
+      "usage"
+    ]
+  },
+  "groupBy": []
+}
