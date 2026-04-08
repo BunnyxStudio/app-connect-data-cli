@@ -4,6 +4,11 @@
 
 - No unreleased changes yet.
 
+## 0.1.3 - 2026-04-08
+
+- 校验 `source-report` 输入并补齐 report-not-ready 警告透传
+- 当订阅报表返回 `Invalid vendor number specified` 时，`brief` / `overview` 自动回退为仅拉取 `summary-sales`
+
 ## 0.1.2 - 2026-04-07
 
 - 修正 `SALES/SUMMARY/DAILY` 请求版本为 `1_0`

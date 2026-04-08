@@ -656,11 +656,19 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             startDate: min(period.currentWindow.startDate, period.previousWindow.startDate),
             endDate: max(period.currentWindow.endDate, period.previousWindow.endDate)
         )
-        _ = try await syncService.syncSalesReports(
-            window: unionWindow,
-            reportFamilies: [.summarySales, .subscription, .subscriptionEvent],
-            force: refresh
-        )
+        do {
+            _ = try await syncService.syncSalesReports(
+                window: unionWindow,
+                reportFamilies: [.summarySales, .subscription, .subscriptionEvent],
+                force: refresh
+            )
+        } catch let error as ASCClientError where shouldFallbackToSummaryOnly(error) {
+            _ = try await syncService.syncSalesReports(
+                window: unionWindow,
+                reportFamilies: [.summarySales],
+                force: refresh
+            )
+        }
         if period.includesFinance {
             _ = try await syncService.syncFinance(
                 fiscalMonths: Array(
@@ -681,6 +689,22 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             totalLimit: nil,
             query: reviewQuery
         )
+    }
+
+    private func shouldFallbackToSummaryOnly(_ error: ASCClientError) -> Bool {
+        let detail: String?
+        switch error {
+        case .httpStatus(_, let message):
+            detail = message
+        case .forbidden(let message):
+            detail = message
+        case .unauthorized(let message):
+            detail = message
+        default:
+            detail = nil
+        }
+        guard let text = detail?.lowercased() else { return false }
+        return text.contains("invalid vendor number specified")
     }
 
     private func loadFinanceOverview(period: ResolvedBriefSummaryPeriod) async throws -> QueryResult? {
