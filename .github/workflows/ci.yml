@@ -13,6 +13,8 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode.app
       - name: Swift version
         run: swift --version
+      - name: Check version consistency
+        run: ./scripts/check_version_consistency.sh
       - name: Build
         run: swift build
       - name: Test

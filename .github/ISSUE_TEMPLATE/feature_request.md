@@ -8,4 +8,4 @@ labels: ["type/feature", "priority/p2", "difficulty/medium"]
 
 ## Proposed solution
 
-## Why this belongs in `app-connect-data-cli`
+## Why this belongs in `app-store-connect-data-cli`

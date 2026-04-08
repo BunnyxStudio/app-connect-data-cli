@@ -1,23 +1,23 @@
 # Support
 
-## 用哪里提问
+## Where to ask
 
-- 用法问题：GitHub Discussions
-- 明确 bug：GitHub Issues
-- 安全问题：按 [SECURITY.md](SECURITY.md) 处理
+- Usage questions: GitHub Discussions
+- Reproducible bugs: GitHub Issues
+- Security issues: follow [SECURITY.md](SECURITY.md)
 
-## 提 bug 时请附带
+## Include when reporting a bug
 
 - commit hash
-- macOS 和 Xcode / Swift 版本
-- 复现命令
-- 实际结果
-- 预期结果
-- 已脱敏的输出
+- macOS and Xcode / Swift versions
+- reproduction command
+- actual result
+- expected result
+- redacted output
 
-## 不要公开贴出的内容
+## Do not post publicly
 
-- `.p8` 文件
-- 完整 JWT
-- 完整 vendor / issuer / key id 组合
-- 未脱敏的缓存文件
+- `.p8` files
+- full JWTs
+- full vendor / issuer / key ID combinations
+- unredacted cache files

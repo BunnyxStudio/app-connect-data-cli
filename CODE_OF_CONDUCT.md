@@ -1,17 +1,17 @@
 # Code Of Conduct
 
-这个项目希望讨论直接、友好、可执行。
+This project expects discussion to be direct, respectful, and actionable.
 
-请做到：
+Please:
 
-- 尊重他人
-- 聚焦问题本身
-- 给出可复现信息
-- 不贴未脱敏的敏感数据
+- Respect others
+- Focus on the problem
+- Share reproducible information
+- Avoid posting unredacted sensitive data
 
-不接受：
+Not accepted:
 
-- 人身攻击
-- 骚扰
-- 歧视
-- 恶意公开他人凭据或数据
+- Personal attacks
+- Harassment
+- Discrimination
+- Malicious exposure of others' credentials or data

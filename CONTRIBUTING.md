@@ -13,7 +13,14 @@ Thanks for contributing to `App Store Connect Data CLI`.
 ```bash
 swift build
 swift test
+./scripts/check_version_consistency.sh
 ./.build/debug/adc --help
+```
+
+Optional full-network smoke (requires valid ASC credentials):
+
+```bash
+./scripts/full_cli_smoke.sh
 ```
 
 ## Before opening a pull request
@@ -23,6 +30,7 @@ Please run at least:
 ```bash
 swift build
 swift test
+./scripts/check_version_consistency.sh
 ```
 
 If you change CLI behavior, also update:

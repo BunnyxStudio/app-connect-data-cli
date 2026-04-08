@@ -62,6 +62,12 @@ What this CLI does not do:
 
 ## Installation
 
+### Requirements
+
+- macOS 14 or later
+- App Store Connect API key access (`issuerID`, `keyID`, `vendorNumber`, `.p8`)
+- Homebrew (for `brew install`) or Xcode 26+ with Swift 6.2+ (for source builds)
+
 ### Homebrew (recommended)
 
 ```bash
@@ -381,8 +387,13 @@ More details: [docs/cache-and-config.md](./docs/cache-and-config.md).
 ```bash
 swift build
 swift test
-./scripts/full_cli_smoke.sh
 ./.build/debug/adc --help
+```
+
+Optional end-to-end smoke (requires real App Store Connect credentials and network access):
+
+```bash
+./scripts/full_cli_smoke.sh
 ```
 
 ## Support

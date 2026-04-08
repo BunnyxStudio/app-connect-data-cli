@@ -2,67 +2,70 @@
 
 ## Unreleased
 
-- No unreleased changes yet.
+- Added explicit platform requirements in `README.md`.
+- Clarified that `scripts/full_cli_smoke.sh` requires real credentials and network access.
+- Added `scripts/check_version_consistency.sh` and wired it into CI.
+- Standardized community-facing docs to English (`SUPPORT.md`, `CODE_OF_CONDUCT.md`).
 
 ## 0.1.7 - 2026-04-08
 
-- 新增 `adc --version` 输出，便于 Homebrew / issue 排查定位版本
-- `sales|reviews|finance|analytics aggregate` 不再接受 `--compare*` 参数，避免“参数可传但不生效”
-- 查询层新增过滤器能力校验：不支持的过滤器改为明确报错，不再静默忽略
-- 修复 `reviews` 的 `rating` / `response-state` 过滤器未生效问题
-- `query run` 新增 compare 参数约束：
-  - 仅 `operation=compare` 可使用 `compare` / `compareTime`
-  - `compareTime` 必须搭配 `compare=custom`
+- Added `adc --version` output for easier issue triage and Homebrew diagnostics.
+- `sales|reviews|finance|analytics aggregate` no longer accepts `--compare*` options that had no effect.
+- Added filter capability validation in query execution; unsupported filters now fail explicitly.
+- Fixed `reviews` `rating` / `response-state` filters not being applied.
+- Added compare parameter constraints in `query run`:
+  - `compare` / `compareTime` are only allowed when `operation=compare`.
+  - `compareTime` requires `compare=custom`.
 
 ## 0.1.6 - 2026-04-08
 
-- 修复 `brief` / `overview` 的并发崩溃根因：将摘要查询从 `async let` 改为 `TaskGroup`，规避 Swift 运行时任务释放异常
-- `brief` / `overview` 预热改为“先确保 `summary-sales` 成功，再尽力拉取订阅类报表”，订阅不可用时自动降级而不影响主体摘要
+- Fixed a concurrency crash in `brief` / `overview` by replacing `async let` with `TaskGroup` in summary queries.
+- Changed warm-up behavior for `brief` / `overview`: ensure `summary-sales` first, then fetch subscription reports best-effort with graceful downgrade.
 
 ## 0.1.5 - 2026-04-08
 
-- 修复 `brief` / `overview` 在部分环境下出现 `freed pointer was not the last allocation` 崩溃
-- 将摘要构建阶段改为稳定优先执行路径，避免高并发查询触发运行时内存错误
-- 修复 Homebrew tap audit：移除冗余 `version` 字段，恢复自动 bottle 流程
+- Fixed `brief` / `overview` crashes in some environments (`freed pointer was not the last allocation`).
+- Switched summary building to a stability-first execution path to avoid runtime memory errors under high concurrency.
+- Fixed Homebrew tap audit by removing a redundant `version` field and restoring bottle automation.
 
 ## 0.1.4 - 2026-04-08
 
-- 修复并发场景下 `DateFormatter` 非线程安全导致的 `brief` / `overview` 进程崩溃风险
-- 为维护者新增 Homebrew 自动发布链路：
-  - 本仓库发版后自动创建 `homebrew-tap` 升级 PR
-  - tap 仓库在 `brew test-bot` 通过后自动标记 `pr-pull`
+- Fixed a `DateFormatter` thread-safety issue that could crash `brief` / `overview` in concurrent execution.
+- Added automated Homebrew release wiring for maintainers:
+  - Publish a release in this repo -> open a formula bump PR in `homebrew-tap`.
+  - Tap repo auto-labels successful `brew test-bot` PRs with `pr-pull`.
 
 ## 0.1.3 - 2026-04-08
 
-- 校验 `source-report` 输入并补齐 report-not-ready 警告透传
-- 当订阅报表返回 `Invalid vendor number specified` 时，`brief` / `overview` 自动回退为仅拉取 `summary-sales`
+- Added validation for `source-report` input and propagated report-not-ready warnings.
+- When subscription reports return `Invalid vendor number specified`, `brief` / `overview` now fall back to `summary-sales` automatically.
 
 ## 0.1.2 - 2026-04-07
 
-- 修正 `SALES/SUMMARY/DAILY` 请求版本为 `1_0`
-- 避免部分账号在 `brief daily` / `overview daily` 上触发 `Invalid vendor number specified`
+- Corrected `SALES/SUMMARY/DAILY` request version to `1_0`.
+- Avoided `Invalid vendor number specified` errors for some accounts on `brief daily` / `overview daily`.
 
 ## 0.1.1 - 2026-04-07
 
-- 项目显示名更新为 `App Store Connect Data CLI`
-- 仓库 slug 更新为 `app-store-connect-data-cli`
-- 保留稳定标识 `adc` 和 `.app-connect-data-cli` 本地目录
-- 调整 README、CONTRIBUTING、NOTICE 和 Homebrew 文案
-- 修正 CONTRIBUTING 中的本地调试命令为 `./.build/debug/adc --help`
+- Updated project display name to `App Store Connect Data CLI`.
+- Updated repository slug to `app-store-connect-data-cli`.
+- Kept stable identifiers `adc` and `.app-connect-data-cli` for local paths.
+- Updated README, CONTRIBUTING, NOTICE, and Homebrew wording.
+- Corrected the local debugging command in CONTRIBUTING to `./.build/debug/adc --help`.
 
 ## 0.1.0 - 2026-04-07
 
-- 初始化开源仓库结构
-- 抽出 `ACDCore`
-- 新增 `ACDAnalytics`
-- 新增 `App Store Connect Data CLI`
-- 支持 auth / sync / query / reviews / doctor / cache
-- 新增 JSON-first `query run --spec`
-- 仓库名调整为 `app-connect-data-cli`
-- CLI 改为直查优先
-- 新增 `--date` / `--from` / `--to` / `--range`
-- `query` 和 `reviews` 在有凭据时按需自动拉取数据
-- `sync` 降为高级预热入口
-- 许可证从 MIT 调整为 Apache-2.0，并新增 `NOTICE` 署名要求
-- 新增 `brief` / `overview` 多表摘要
-- 新增 Homebrew tap 安装支持
+- Initialized the open-source repository layout.
+- Extracted `ACDCore`.
+- Added `ACDAnalytics`.
+- Added `App Store Connect Data CLI`.
+- Added support for `auth / sync / query / reviews / doctor / cache`.
+- Added JSON-first `query run --spec`.
+- Renamed repository slug to `app-connect-data-cli`.
+- Switched CLI behavior to direct-query first.
+- Added `--date` / `--from` / `--to` / `--range`.
+- `query` and `reviews` now fetch on demand when credentials are available.
+- Demoted `sync` to an advanced warm-up entrypoint.
+- Changed license from MIT to Apache-2.0 and added attribution requirements in `NOTICE`.
+- Added multi-table `brief` / `overview` summaries.
+- Added Homebrew tap installation support.
