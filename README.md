@@ -102,6 +102,60 @@ export ADC_REPORTING_CURRENCY="USD"
 export ADC_DISPLAY_TIMEZONE="Asia/Shanghai"
 ```
 
+### Where to get required IDs and `.p8` key
+
+You need four credential values:
+
+- `issuerID`
+- `keyID`
+- `vendorNumber`
+- `p8Path` (path to your local `AuthKey_XXXXXX.p8` file)
+
+Get `issuerID`, `keyID`, and `.p8`:
+
+1. Open App Store Connect.
+2. Go to `Users and Access` -> `Integrations` -> `App Store Connect API`.
+3. Copy `Issuer ID` from this page.
+4. Create a Team API key if you do not have one yet.
+5. Copy the new key's `Key ID`.
+6. Download the `.p8` file (`AuthKey_<KEY_ID>.p8`).
+
+Important: Apple only lets you download the `.p8` file once.
+
+Get `vendorNumber`:
+
+1. Open App Store Connect.
+2. Go to `Agreements, Tax, and Banking`.
+3. Open your active agreement details.
+4. Copy your `Vendor Number`.
+
+Store your key safely:
+
+```bash
+mkdir -p ~/.keys/appstoreconnect
+mv /path/to/AuthKey_XXXXXX.p8 ~/.keys/appstoreconnect/
+chmod 600 ~/.keys/appstoreconnect/AuthKey_XXXXXX.p8
+```
+
+Never commit `.p8` into git.
+Keep it outside your repo.
+This repo already ignores `*.p8`.
+
+Then set:
+
+```bash
+export ASC_ISSUER_ID="YOUR_ISSUER_ID"
+export ASC_KEY_ID="YOUR_KEY_ID"
+export ASC_VENDOR_NUMBER="YOUR_VENDOR_NUMBER"
+export ASC_P8_PATH="$HOME/.keys/appstoreconnect/AuthKey_XXXXXX.p8"
+```
+
+Validate your setup:
+
+```bash
+adc auth validate --output table
+```
+
 Or create one of these files:
 
 - `./.app-connect-data-cli/config.json`
