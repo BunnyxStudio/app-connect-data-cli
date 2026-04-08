@@ -227,7 +227,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
     private func build(resolved period: ResolvedBriefSummaryPeriod) async throws -> BriefSummaryReport {
         try await prefetch(period: period)
 
-        async let salesOverview = executeQuery(
+        let resolvedSalesOverview = try await executeQuery(
             dataset: .sales,
             operation: .compare,
             time: period.currentSelection,
@@ -235,7 +235,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: []
         )
-        async let reviewsOverview = executeQuery(
+        let resolvedReviewsOverview = try await executeQuery(
             dataset: .reviews,
             operation: .compare,
             time: period.currentSelection,
@@ -243,9 +243,9 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(),
             groupBy: []
         )
-        async let financeOverview = loadFinanceOverview(period: period)
+        let resolvedFinanceOverview = try await loadFinanceOverview(period: period)
 
-        async let salesByTerritory = executeQuery(
+        let resolvedSalesByTerritory = try await executeQuery(
             dataset: .sales,
             operation: .compare,
             time: period.currentSelection,
@@ -253,7 +253,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: [.territory]
         )
-        async let salesByDevice = executeQuery(
+        let resolvedSalesByDevice = try await executeQuery(
             dataset: .sales,
             operation: .compare,
             time: period.currentSelection,
@@ -261,7 +261,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: [.device]
         )
-        async let salesByVersion = executeQuery(
+        let resolvedSalesByVersion = try await executeQuery(
             dataset: .sales,
             operation: .compare,
             time: period.currentSelection,
@@ -269,7 +269,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: [.version]
         )
-        async let salesByCurrency = executeQuery(
+        let resolvedSalesByCurrency = try await executeQuery(
             dataset: .sales,
             operation: .compare,
             time: period.currentSelection,
@@ -277,7 +277,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: [.currency]
         )
-        async let reviewsByRating = executeQuery(
+        let resolvedReviewsByRating = try await executeQuery(
             dataset: .reviews,
             operation: .compare,
             time: period.currentSelection,
@@ -285,7 +285,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(),
             groupBy: [.rating]
         )
-        async let reviewsByTerritory = executeQuery(
+        let resolvedReviewsByTerritory = try await executeQuery(
             dataset: .reviews,
             operation: .compare,
             time: period.currentSelection,
@@ -293,10 +293,10 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(),
             groupBy: [.territory]
         )
-        async let financeByTerritory = loadFinanceBreakdown(period: period, groupBy: .territory)
-        async let financeByCurrency = loadFinanceBreakdown(period: period, groupBy: .currency)
+        let resolvedFinanceByTerritory = try await loadFinanceBreakdown(period: period, groupBy: .territory)
+        let resolvedFinanceByCurrency = try await loadFinanceBreakdown(period: period, groupBy: .currency)
 
-        async let currentSummarySales = executeQuery(
+        let resolvedCurrentSummarySales = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.currentSelection,
@@ -304,7 +304,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["summary-sales"]),
             groupBy: []
         )
-        async let previousSummarySales = executeQuery(
+        let resolvedPreviousSummarySales = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.previousSelection,
@@ -313,7 +313,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             groupBy: []
         )
 
-        async let currentSubscriptions = executeQuery(
+        let resolvedCurrentSubscriptions = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.currentSelection,
@@ -321,7 +321,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["subscription"]),
             groupBy: []
         )
-        async let previousSubscriptions = executeQuery(
+        let resolvedPreviousSubscriptions = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.previousSelection,
@@ -330,7 +330,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             groupBy: []
         )
 
-        async let currentEvents = executeQuery(
+        let resolvedCurrentEvents = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.currentSelection,
@@ -338,7 +338,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(sourceReport: ["subscription-event"]),
             groupBy: []
         )
-        async let previousEvents = executeQuery(
+        let resolvedPreviousEvents = try await executeQuery(
             dataset: .sales,
             operation: .records,
             time: period.previousSelection,
@@ -347,7 +347,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             groupBy: []
         )
 
-        async let currentReviews = executeQuery(
+        let resolvedCurrentReviews = try await executeQuery(
             dataset: .reviews,
             operation: .records,
             time: period.currentSelection,
@@ -355,7 +355,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             filters: QueryFilterSet(),
             groupBy: []
         )
-        async let previousReviews = executeQuery(
+        let resolvedPreviousReviews = try await executeQuery(
             dataset: .reviews,
             operation: .records,
             time: period.previousSelection,
@@ -364,28 +364,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             groupBy: []
         )
 
-        async let currentFinance = loadFinanceRecords(period: period)
-
-        let resolvedSalesOverview = try await salesOverview
-        let resolvedReviewsOverview = try await reviewsOverview
-        let resolvedFinanceOverview = try await financeOverview
-        let resolvedSalesByTerritory = try await salesByTerritory
-        let resolvedSalesByDevice = try await salesByDevice
-        let resolvedSalesByVersion = try await salesByVersion
-        let resolvedSalesByCurrency = try await salesByCurrency
-        let resolvedReviewsByRating = try await reviewsByRating
-        let resolvedReviewsByTerritory = try await reviewsByTerritory
-        let resolvedFinanceByTerritory = try await financeByTerritory
-        let resolvedFinanceByCurrency = try await financeByCurrency
-        let resolvedCurrentSummarySales = try await currentSummarySales
-        let resolvedPreviousSummarySales = try await previousSummarySales
-        let resolvedCurrentSubscriptions = try await currentSubscriptions
-        let resolvedPreviousSubscriptions = try await previousSubscriptions
-        let resolvedCurrentEvents = try await currentEvents
-        let resolvedPreviousEvents = try await previousEvents
-        let resolvedCurrentReviews = try await currentReviews
-        let resolvedPreviousReviews = try await previousReviews
-        let resolvedCurrentFinance = try await currentFinance
+        let resolvedCurrentFinance = try await loadFinanceRecords(period: period)
 
         var sections: [BriefSummarySection] = []
 

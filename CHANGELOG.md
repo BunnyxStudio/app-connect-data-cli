@@ -4,6 +4,11 @@
 
 - No unreleased changes yet.
 
+## 0.1.5 - 2026-04-08
+
+- 修复 `brief` / `overview` 在部分环境下出现 `freed pointer was not the last allocation` 崩溃
+- 将摘要构建阶段改为稳定优先执行路径，避免高并发查询触发运行时内存错误
+
 ## 0.1.4 - 2026-04-08
 
 - 修复并发场景下 `DateFormatter` 非线程安全导致的 `brief` / `overview` 进程崩溃风险
