@@ -191,6 +191,19 @@ final class BinarySmokeTests: XCTestCase {
         XCTAssertTrue(showResult.output.contains("\"displayTimeZone\" : \"America\\/Los_Angeles\""))
     }
 
+    func testSalesAggregateRejectsUnknownSourceReport() throws {
+        let workingDirectory = try makeTempDirectory()
+
+        let result = try runProcess(
+            arguments: ["sales", "aggregate", "--date", "2026-02-18", "--source-report", "not-a-report", "--output", "json"],
+            workingDirectory: workingDirectory
+        )
+
+        XCTAssertNotEqual(result.status, 0, result.output)
+        XCTAssertTrue(result.output.contains("Unsupported sales source-report"))
+        XCTAssertTrue(result.output.contains("summary-sales"))
+    }
+
     private func seedSubscriptionCache(in workingDirectory: URL) throws {
         let root = workingDirectory.appendingPathComponent(".app-connect-data-cli/cache", isDirectory: true)
         let cacheStore = CacheStore(rootDirectory: root)

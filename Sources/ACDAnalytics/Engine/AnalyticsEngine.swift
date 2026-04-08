@@ -160,9 +160,11 @@ public final class AnalyticsEngine: @unchecked Sendable {
         skipSync: Bool
     ) async throws -> QueryResult {
         let selection = try resolveSelection(dataset: .sales, time: spec.time, defaultPreset: .last7d)
-        let requestedReports = normalizedSalesFamilies(filters: spec.filters)
+        let requestedReports = try normalizedSalesFamilies(filters: spec.filters)
+        var syncWarnings: [QueryWarning] = []
         if offline == false, skipSync == false, let syncService {
-            _ = try await syncService.syncSalesReports(window: selection.window, reportFamilies: requestedReports, force: refresh)
+            let summary = try await syncService.syncSalesReports(window: selection.window, reportFamilies: requestedReports, force: refresh)
+            syncWarnings = summary.warnings
         }
         let records = try loadSalesRecords(window: selection.window, filters: spec.filters, requestedReports: requestedReports)
         return try await buildResult(
@@ -171,6 +173,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
             selection: selection,
             source: requestedReports.map(\.rawValue),
             records: records,
+            baseWarnings: syncWarnings,
             allowFXNetwork: offline == false
         )
     }
@@ -184,6 +187,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
         if spec.filters.version.isEmpty == false {
             throw AnalyticsEngineError.unsupportedFilter("Reviews do not support version filtering because Apple does not expose review app versions.")
         }
+        try validateReviewSourceReports(spec.filters.sourceReport)
         if offline == false, skipSync == false, let syncService {
             let query = ASCCustomerReviewQuery(sort: .newest)
             _ = try await syncService.syncReviews(
@@ -212,22 +216,26 @@ public final class AnalyticsEngine: @unchecked Sendable {
         skipSync: Bool
     ) async throws -> QueryResult {
         let selection = try resolveSelection(dataset: .finance, time: spec.time, defaultPreset: .lastMonth)
+        let requestedReports = try normalizedFinanceSourceReports(filters: spec.filters)
+        var syncWarnings: [QueryWarning] = []
         if offline == false, skipSync == false, let syncService {
-            _ = try await syncService.syncFinance(
+            let summary = try await syncService.syncFinance(
                 fiscalMonths: selection.fiscalMonths,
                 regionCodes: ["ZZ", "Z1"],
-                reportTypes: [.financial, .financeDetail],
+                reportTypes: financeReportTypes(for: requestedReports),
                 force: refresh
             )
+            syncWarnings = summary.warnings
         }
         let records = try loadFinanceRecords(fiscalMonths: selection.fiscalMonths, filters: spec.filters)
-        let source = spec.filters.sourceReport.isEmpty ? ["financial", "finance-detail"] : spec.filters.sourceReport
+        let source = requestedReports.isEmpty ? ["financial", "finance-detail"] : requestedReports
         return try await buildResult(
             dataset: .finance,
             spec: spec,
             selection: selection,
             source: source,
             records: records,
+            baseWarnings: syncWarnings,
             allowFXNetwork: offline == false
         )
     }
@@ -239,7 +247,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
         skipSync: Bool
     ) async throws -> QueryResult {
         let selection = try resolveSelection(dataset: .analytics, time: spec.time, defaultPreset: .last7d)
-        let reportDescriptors = normalizedAnalyticsReports(filters: spec.filters)
+        let reportDescriptors = try normalizedAnalyticsReports(filters: spec.filters)
         let warnings = skipSync ? [] : try await ensureAnalyticsData(
             selection: selection,
             filters: spec.filters,
@@ -353,9 +361,10 @@ public final class AnalyticsEngine: @unchecked Sendable {
             return try loadSalesRecords(
                 window: selection.window,
                 filters: filters,
-                requestedReports: normalizedSalesFamilies(filters: filters)
+                requestedReports: try normalizedSalesFamilies(filters: filters)
             )
         case .reviews:
+            try validateReviewSourceReports(filters.sourceReport)
             return try loadReviewRecords(window: selection.window, filters: filters)
         case .finance:
             return try loadFinanceRecords(fiscalMonths: selection.fiscalMonths, filters: filters)
@@ -363,37 +372,47 @@ public final class AnalyticsEngine: @unchecked Sendable {
             return try loadAnalyticsRecords(
                 window: selection.window,
                 filters: filters,
-                descriptors: normalizedAnalyticsReports(filters: filters)
+                descriptors: try normalizedAnalyticsReports(filters: filters)
             )
         case .brief:
             throw AnalyticsEngineError.invalidQuery("Brief summaries do not load comparison records through AnalyticsEngine.")
         }
     }
 
-    private func normalizedSalesFamilies(filters: QueryFilterSet) -> [SalesReportFamily] {
+    private func normalizedSalesFamilies(filters: QueryFilterSet) throws -> [SalesReportFamily] {
         let candidates = filters.sourceReport.isEmpty ? [SalesReportFamily.summarySales.rawValue] : filters.sourceReport
-        let mapped = candidates.compactMap { value -> SalesReportFamily? in
-            let normalized = value
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-                .replacingOccurrences(of: "_", with: "-")
-            switch normalized {
+        var mapped: [SalesReportFamily] = []
+        var invalid: [String] = []
+        for value in candidates {
+            switch normalizeReportName(value) {
             case "summary-sales", "sales", "summary":
-                return .summarySales
+                mapped.append(.summarySales)
             case "subscription":
-                return .subscription
+                mapped.append(.subscription)
             case "subscription-event", "sales-events":
-                return .subscriptionEvent
+                mapped.append(.subscriptionEvent)
             case "subscriber":
-                return .subscriber
+                mapped.append(.subscriber)
             case "pre-order", "preorder":
-                return .preOrder
+                mapped.append(.preOrder)
             case "subscription-offer-redemption", "offer-redemption":
-                return .subscriptionOfferRedemption
+                mapped.append(.subscriptionOfferRedemption)
             default:
-                return nil
+                invalid.append(value)
             }
         }
+        try validateSourceReportInputs(
+            invalid,
+            dataset: .sales,
+            supported: [
+                "summary-sales",
+                "subscription",
+                "subscription-event",
+                "subscriber",
+                "pre-order",
+                "subscription-offer-redemption"
+            ]
+        )
         return mapped.isEmpty ? [.summarySales] : Array(Set(mapped)).sorted { $0.rawValue < $1.rawValue }
     }
 
@@ -404,48 +423,122 @@ public final class AnalyticsEngine: @unchecked Sendable {
         let preferredAccessType: ASCAnalyticsAccessType
     }
 
-    private func normalizedAnalyticsReports(filters: QueryFilterSet) -> [AnalyticsReportDescriptor] {
+    private func normalizedAnalyticsReports(filters: QueryFilterSet) throws -> [AnalyticsReportDescriptor] {
         let defaults = ["acquisition", "engagement", "usage", "performance"]
         let inputs = filters.sourceReport.isEmpty ? defaults : filters.sourceReport
-        let mapped = inputs.compactMap { value -> AnalyticsReportDescriptor? in
-            let normalized = value
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-                .replacingOccurrences(of: "_", with: "-")
-            switch normalized {
+        var mapped: [AnalyticsReportDescriptor] = []
+        var invalid: [String] = []
+        for value in inputs {
+            switch normalizeReportName(value) {
             case "acquisition", "app-download", "app-downloads":
-                return AnalyticsReportDescriptor(
+                mapped.append(
+                    AnalyticsReportDescriptor(
                     id: "acquisition",
                     requestName: "App Store Downloads",
                     category: .commerce,
                     preferredAccessType: .oneTimeSnapshot
                 )
+                )
             case "engagement", "app-store-discovery-and-engagement":
-                return AnalyticsReportDescriptor(
+                mapped.append(
+                    AnalyticsReportDescriptor(
                     id: "engagement",
                     requestName: "App Store Discovery and Engagement",
                     category: .appStoreEngagement,
                     preferredAccessType: .oneTimeSnapshot
                 )
+                )
             case "usage", "app-sessions":
-                return AnalyticsReportDescriptor(
+                mapped.append(
+                    AnalyticsReportDescriptor(
                     id: "usage",
                     requestName: "App Sessions",
                     category: .appUsage,
                     preferredAccessType: .oneTimeSnapshot
                 )
+                )
             case "performance", "app-crashes":
-                return AnalyticsReportDescriptor(
+                mapped.append(
+                    AnalyticsReportDescriptor(
                     id: "performance",
                     requestName: "App Crashes",
                     category: nil,
                     preferredAccessType: .oneTimeSnapshot
                 )
+                )
             default:
-                return nil
+                invalid.append(value)
             }
         }
+        try validateSourceReportInputs(
+            invalid,
+            dataset: .analytics,
+            supported: ["acquisition", "engagement", "usage", "performance"]
+        )
         return mapped.isEmpty ? [] : mapped
+    }
+
+    private func validateReviewSourceReports(_ values: [String]) throws {
+        guard values.isEmpty == false else { return }
+        let invalid = values.filter { value in
+            switch normalizeReportName(value) {
+            case "customer-reviews", "reviews":
+                return false
+            default:
+                return true
+            }
+        }
+        try validateSourceReportInputs(
+            invalid,
+            dataset: .reviews,
+            supported: ["customer-reviews"]
+        )
+    }
+
+    private func normalizedFinanceSourceReports(filters: QueryFilterSet) throws -> [String] {
+        guard filters.sourceReport.isEmpty == false else { return [] }
+        var mapped: [String] = []
+        var invalid: [String] = []
+        for value in filters.sourceReport {
+            switch normalizeReportName(value) {
+            case "financial":
+                mapped.append("financial")
+            case "finance-detail":
+                mapped.append("finance-detail")
+            default:
+                invalid.append(value)
+            }
+        }
+        try validateSourceReportInputs(
+            invalid,
+            dataset: .finance,
+            supported: ["financial", "finance-detail"]
+        )
+        return Array(Set(mapped)).sorted()
+    }
+
+    func financeReportTypes(for requestedReports: [String]) -> [FinanceReportType] {
+        var reportTypes: [FinanceReportType] = []
+        if requestedReports.isEmpty || requestedReports.contains("financial") {
+            reportTypes.append(.financial)
+        }
+        if requestedReports.isEmpty || requestedReports.contains("finance-detail") {
+            reportTypes.append(.financeDetail)
+        }
+        return reportTypes
+    }
+
+    private func validateSourceReportInputs(
+        _ invalid: [String],
+        dataset: QueryDataset,
+        supported: [String]
+    ) throws {
+        guard invalid.isEmpty == false else { return }
+        let invalidList = invalid.joined(separator: ", ")
+        let supportedList = supported.joined(separator: ", ")
+        throw AnalyticsEngineError.unsupportedFilter(
+            "Unsupported \(dataset.rawValue) source-report: \(invalidList). Supported values: \(supportedList)."
+        )
     }
 
     private func ensureAnalyticsData(

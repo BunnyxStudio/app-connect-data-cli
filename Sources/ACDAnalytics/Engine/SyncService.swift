@@ -18,14 +18,21 @@ import ACDCore
 public struct SyncSummary: Codable, Sendable {
     public var records: [CachedReportRecord]
     public var reviewCount: Int
+    public var warnings: [QueryWarning]
 
-    public init(records: [CachedReportRecord] = [], reviewCount: Int = 0) {
+    public init(records: [CachedReportRecord] = [], reviewCount: Int = 0, warnings: [QueryWarning] = []) {
         self.records = records
         self.reviewCount = reviewCount
+        self.warnings = warnings
     }
 }
 
 public final class SyncService {
+    private struct AvailableReportsLoadResult {
+        var reports: [DownloadedReport]
+        var unavailableCount: Int
+    }
+
     private let maxConcurrentFetches = 3
     private let cacheStore: CacheStore
     private let downloader: ReportDownloader
@@ -62,9 +69,12 @@ public final class SyncService {
             }
         }
 
-        let reports = try await loadAvailableReports(operations)
-        let records = try cacheStore.record(reports: reports)
-        return SyncSummary(records: records)
+        let loaded = try await loadAvailableReports(operations)
+        let records = try cacheStore.record(reports: loaded.reports)
+        return SyncSummary(
+            records: records,
+            warnings: salesReportNotReadyWarnings(unavailableCount: loaded.unavailableCount)
+        )
     }
 
     public func syncSales(
@@ -87,10 +97,12 @@ public final class SyncService {
         let downloader = self.downloader
         let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
         var records: [CachedReportRecord] = []
+        var warnings: [QueryWarning] = []
 
         if requested.contains(.summarySales) {
             let summary = try await syncSales(window: window, force: force)
             records.append(contentsOf: summary.records)
+            warnings.append(contentsOf: summary.warnings)
         }
 
         let dates = ptDates(in: window)
@@ -124,9 +136,10 @@ public final class SyncService {
             }
         }
 
-        let reports = try await loadAvailableReports(operations)
-        records.append(contentsOf: try cacheStore.record(reports: reports))
-        return SyncSummary(records: records)
+        let loaded = try await loadAvailableReports(operations)
+        records.append(contentsOf: try cacheStore.record(reports: loaded.reports))
+        warnings.append(contentsOf: salesReportNotReadyWarnings(unavailableCount: loaded.unavailableCount))
+        return SyncSummary(records: records, warnings: deduplicatedWarnings(warnings))
     }
 
     public func syncSubscriptions(
@@ -149,9 +162,12 @@ public final class SyncService {
             }
         }
 
-        let reports = try await loadAvailableReports(operations)
-        let records = try cacheStore.record(reports: reports)
-        return SyncSummary(records: records)
+        let loaded = try await loadAvailableReports(operations)
+        let records = try cacheStore.record(reports: loaded.reports)
+        return SyncSummary(
+            records: records,
+            warnings: salesReportNotReadyWarnings(unavailableCount: loaded.unavailableCount)
+        )
     }
 
     public func syncSubscriptions(
@@ -186,9 +202,12 @@ public final class SyncService {
             }
         }
 
-        let reports = try await loadAvailableReports(operations)
-        let records = try cacheStore.record(reports: reports)
-        return SyncSummary(records: records)
+        let loaded = try await loadAvailableReports(operations)
+        let records = try cacheStore.record(reports: loaded.reports)
+        return SyncSummary(
+            records: records,
+            warnings: financeReportNotReadyWarnings(unavailableCount: loaded.unavailableCount)
+        )
     }
 
     public func syncFinance(
@@ -225,12 +244,15 @@ public final class SyncService {
 
     private func loadAvailableReports(
         _ operations: [@Sendable () async throws -> DownloadedReport]
-    ) async throws -> [DownloadedReport] {
-        guard operations.isEmpty == false else { return [] }
+    ) async throws -> AvailableReportsLoadResult {
+        guard operations.isEmpty == false else {
+            return AvailableReportsLoadResult(reports: [], unavailableCount: 0)
+        }
 
-        return try await withThrowingTaskGroup(of: DownloadedReport?.self) { group in
+        return try await withThrowingTaskGroup(of: LoadAvailableReportResult.self) { group in
             var iterator = operations.makeIterator()
             var reports: [DownloadedReport] = []
+            var unavailableCount = 0
 
             for _ in 0..<min(maxConcurrentFetches, operations.count) {
                 guard let operation = iterator.next() else { break }
@@ -239,10 +261,11 @@ public final class SyncService {
                 }
             }
 
-            while let report = try await group.next() {
-                if let report {
+            while let result = try await group.next() {
+                if let report = result.report {
                     reports.append(report)
                 }
+                unavailableCount += result.unavailableCount
                 if let next = iterator.next() {
                     group.addTask {
                         try await Self.loadAvailableReport(next)
@@ -250,17 +273,49 @@ public final class SyncService {
                 }
             }
 
-            return reports
+            return AvailableReportsLoadResult(reports: reports, unavailableCount: unavailableCount)
         }
+    }
+
+    private struct LoadAvailableReportResult {
+        var report: DownloadedReport?
+        var unavailableCount: Int
     }
 
     private static func loadAvailableReport(
         _ load: @Sendable () async throws -> DownloadedReport
-    ) async throws -> DownloadedReport? {
+    ) async throws -> LoadAvailableReportResult {
         do {
-            return try await load()
+            return LoadAvailableReportResult(report: try await load(), unavailableCount: 0)
         } catch ASCClientError.reportNotAvailableYet {
-            return nil
+            return LoadAvailableReportResult(report: nil, unavailableCount: 1)
+        }
+    }
+
+    private func salesReportNotReadyWarnings(unavailableCount: Int) -> [QueryWarning] {
+        guard unavailableCount > 0 else { return [] }
+        return [
+            QueryWarning(
+                code: "sales-report-not-ready",
+                message: "Apple reported that one or more requested Sales and Trends reports are not available yet. Apple may respond with \"The request expected results but none were found - Report is not available yet.\" For daily Sales and Trends reports, Apple Reporter guidance says availability is staggered: Americas by 5 am PT, Japan, Australia, and New Zealand by 5 am JST, and other territories by 5 am CET. Retry later or use --offline if you already have cached data."
+            )
+        ]
+    }
+
+    private func financeReportNotReadyWarnings(unavailableCount: Int) -> [QueryWarning] {
+        guard unavailableCount > 0 else { return [] }
+        return [
+            QueryWarning(
+                code: "finance-report-not-ready",
+                message: "Apple reported that one or more requested finance reports are not available yet. Retry later or use --offline if you already have cached data."
+            )
+        ]
+    }
+
+    private func deduplicatedWarnings(_ warnings: [QueryWarning]) -> [QueryWarning] {
+        var seen: Set<String> = []
+        return warnings.filter { warning in
+            seen.insert("\(warning.code)|\(warning.message)").inserted
         }
     }
 }

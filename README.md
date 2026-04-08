@@ -208,6 +208,23 @@ The summary header shows:
 - the configured reporting currency
 - the next daily rollover in your display time zone
 
+Apple can still return a not-ready response before a requested report is published.
+
+A common Sales and Trends response is:
+
+`The request expected results but none were found - Report is not available yet.`
+
+Treat that as "Apple has not published this report yet", not as zero sales or zero activity.
+
+For daily Sales and Trends reports, Apple Reporter guidance says availability is staggered:
+
+- Americas by 5 am Pacific Time
+- Japan, Australia, and New Zealand by 5 am Japan Standard Time
+- Other territories by 5 am Central European Time
+
+Use the CLI rollover hint as a planning aid, not a guarantee that every Apple daily report is already ready.
+If you already have local cache, use `--offline` to avoid replacing a known-good cached result with an Apple not-ready response.
+
 Display time zone comes from:
 
 - `ADC_DISPLAY_TIMEZONE`

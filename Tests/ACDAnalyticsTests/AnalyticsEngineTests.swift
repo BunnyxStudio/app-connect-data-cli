@@ -133,6 +133,116 @@ final class AnalyticsEngineTests: XCTestCase {
         XCTAssertTrue(result.data.aggregates.contains { $0.group["territory"] == "CN" })
     }
 
+    func testSalesAggregateRejectsUnknownSourceReport() async throws {
+        let cacheStore = try makeCacheStore()
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+
+        await XCTAssertThrowsErrorAsync(
+            try await engine.execute(
+                spec: DataQuerySpec(
+                    dataset: .sales,
+                    operation: .aggregate,
+                    time: QueryTimeSelection(datePT: "2026-02-18"),
+                    filters: QueryFilterSet(sourceReport: ["not-a-report"])
+                ),
+                offline: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? AnalyticsEngineError)?.errorDescription,
+                "Unsupported sales source-report: not-a-report. Supported values: summary-sales, subscription, subscription-event, subscriber, pre-order, subscription-offer-redemption."
+            )
+        }
+    }
+
+    func testReviewsRecordsRejectUnknownSourceReport() async throws {
+        let cacheStore = try makeCacheStore()
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+
+        await XCTAssertThrowsErrorAsync(
+            try await engine.execute(
+                spec: DataQuerySpec(
+                    dataset: .reviews,
+                    operation: .records,
+                    time: QueryTimeSelection(datePT: "2026-02-18"),
+                    filters: QueryFilterSet(sourceReport: ["not-a-report"])
+                ),
+                offline: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? AnalyticsEngineError)?.errorDescription,
+                "Unsupported reviews source-report: not-a-report. Supported values: customer-reviews."
+            )
+        }
+    }
+
+    func testFinanceAggregateRejectsUnknownSourceReport() async throws {
+        let cacheStore = try makeCacheStore()
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+
+        await XCTAssertThrowsErrorAsync(
+            try await engine.execute(
+                spec: DataQuerySpec(
+                    dataset: .finance,
+                    operation: .aggregate,
+                    time: QueryTimeSelection(fiscalMonth: "2025-11"),
+                    filters: QueryFilterSet(sourceReport: ["not-a-report"])
+                ),
+                offline: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? AnalyticsEngineError)?.errorDescription,
+                "Unsupported finance source-report: not-a-report. Supported values: financial, finance-detail."
+            )
+        }
+    }
+
+    func testFinanceReportTypesDefaultsToBothWhenSourceReportIsOmitted() throws {
+        let engine = AnalyticsEngine(cacheStore: try makeCacheStore())
+
+        XCTAssertEqual(
+            engine.financeReportTypes(for: []),
+            [.financial, .financeDetail]
+        )
+    }
+
+    func testFinanceReportTypesOnlyIncludesRequestedSourceReport() throws {
+        let engine = AnalyticsEngine(cacheStore: try makeCacheStore())
+
+        XCTAssertEqual(
+            engine.financeReportTypes(for: ["financial"]),
+            [.financial]
+        )
+        XCTAssertEqual(
+            engine.financeReportTypes(for: ["finance-detail"]),
+            [.financeDetail]
+        )
+    }
+
+    func testAnalyticsAggregateRejectsUnknownSourceReport() async throws {
+        let cacheStore = try makeCacheStore()
+        let engine = AnalyticsEngine(cacheStore: cacheStore)
+
+        await XCTAssertThrowsErrorAsync(
+            try await engine.execute(
+                spec: DataQuerySpec(
+                    dataset: .analytics,
+                    operation: .aggregate,
+                    time: QueryTimeSelection(datePT: "2026-02-18"),
+                    filters: QueryFilterSet(sourceReport: ["not-a-report"])
+                ),
+                offline: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                (error as? AnalyticsEngineError)?.errorDescription,
+                "Unsupported analytics source-report: not-a-report. Supported values: acquisition, engagement, usage, performance."
+            )
+        }
+    }
+
     func testSalesAggregateNormalizesMixedCurrenciesToUSD() async throws {
         let cacheStore = try makeCacheStore()
         try recordReport(
@@ -348,5 +458,17 @@ final class AnalyticsEngineTests: XCTestCase {
             .appendingPathComponent("Fixtures", isDirectory: true)
             .appendingPathComponent(name)
         return try String(contentsOf: path, encoding: .utf8)
+    }
+
+    private func XCTAssertThrowsErrorAsync<T>(
+        _ expression: @autoclosure () async throws -> T,
+        _ errorHandler: (Error) -> Void
+    ) async {
+        do {
+            _ = try await expression()
+            XCTFail("Expected error to be thrown")
+        } catch {
+            errorHandler(error)
+        }
     }
 }

@@ -8,6 +8,18 @@ final class ASCClientTests: XCTestCase {
         super.tearDown()
     }
 
+    func testReportNotAvailableYetErrorIncludesAvailabilityGuidance() throws {
+        let error = ASCClientError.reportNotAvailableYet(
+            "The request expected results but none were found - Report is not available yet."
+        )
+
+        let description = try XCTUnwrap(error.errorDescription)
+        XCTAssertTrue(description.contains("The request expected results but none were found - Report is not available yet."))
+        XCTAssertTrue(description.contains("5 am PT"))
+        XCTAssertTrue(description.contains("5 am JST"))
+        XCTAssertTrue(description.contains("5 am CET"))
+    }
+
     func testFetchLatestCustomerReviewsFetchesMultipleAppsConcurrently() async throws {
         let probe = ReviewConcurrencyProbe()
         let configuration = URLSessionConfiguration.ephemeral

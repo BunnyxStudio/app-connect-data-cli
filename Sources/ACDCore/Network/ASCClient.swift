@@ -78,7 +78,8 @@ public enum ASCClientError: LocalizedError {
         case .teamKeyRequired:
             return "Sales and Finance endpoints require Team API key."
         case .reportNotAvailableYet(let message):
-            return message ?? "Report is not available yet."
+            let detail = message ?? "Report is not available yet."
+            return detail + " Apple may return this before a requested report has been published. For Sales and Trends daily reports, Apple Reporter guidance says availability is staggered: Americas by 5 am PT, Japan, Australia, and New Zealand by 5 am JST, and other territories by 5 am CET."
         case .httpStatus(let status, let message):
             return message ?? "Unexpected HTTP status \(status)."
         case .network(let error):
