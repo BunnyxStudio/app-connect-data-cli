@@ -1,9 +1,9 @@
 class Adc < Formula
   desc "App Store Connect Data CLI for official Apple reporting data"
   homepage "https://github.com/BunnyxStudio/app-store-connect-data-cli"
-  url "https://github.com/BunnyxStudio/app-store-connect-data-cli/archive/refs/tags/v0.1.2.tar.gz"
-  version "0.1.2"
-  sha256 "0f710379e7df476770500cd062989df9bb55f43cfb63e1b323b33f755aea9400"
+  url "https://github.com/BunnyxStudio/app-store-connect-data-cli/archive/refs/tags/v0.1.3.tar.gz"
+  version "0.1.3"
+  sha256 "443dae142d5085bc946ac2f40a8d02545f52a15335bd9d0fcd01dc5479e6bdd8"
   license "Apache-2.0"
 
   resource "swift-argument-parser" do
