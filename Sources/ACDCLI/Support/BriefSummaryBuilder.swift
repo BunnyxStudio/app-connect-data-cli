@@ -224,168 +224,93 @@ struct BriefSummaryBuilder: @unchecked Sendable {
         return try await build(period: period)
     }
 
+    private enum BriefSlot: Int, CaseIterable, Sendable {
+        case salesOverview = 0
+        case reviewsOverview
+        case salesByTerritory
+        case salesByDevice
+        case salesByVersion
+        case salesByCurrency
+        case reviewsByRating
+        case reviewsByTerritory
+        case currentSummarySales
+        case previousSummarySales
+        case currentSubscriptions
+        case previousSubscriptions
+        case currentEvents
+        case previousEvents
+        case currentReviews
+        case previousReviews
+    }
+
     private func build(resolved period: ResolvedBriefSummaryPeriod) async throws -> BriefSummaryReport {
         try await prefetch(period: period)
 
-        async let salesOverview = executeQuery(
-            dataset: .sales,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: []
-        )
-        async let reviewsOverview = executeQuery(
-            dataset: .reviews,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(),
-            groupBy: []
-        )
-        async let financeOverview = loadFinanceOverview(period: period)
+        // Run all queries concurrently via TaskGroup instead of async let
+        // to avoid a Swift runtime bug in async let deallocation (rdar://FB13720144).
+        let slots = try await withThrowingTaskGroup(
+            of: (BriefSlot, QueryResult).self,
+            returning: [BriefSlot: QueryResult].self
+        ) { group in
+            let queries: [(BriefSlot, QueryDataset, QueryOperation, QueryTimeSelection, QueryCompareMode?, QueryFilterSet, [QueryGroupBy])] = [
+                (.salesOverview, .sales, .compare, period.currentSelection, period.compareMode, QueryFilterSet(sourceReport: ["summary-sales"]), []),
+                (.reviewsOverview, .reviews, .compare, period.currentSelection, period.compareMode, QueryFilterSet(), []),
+                (.salesByTerritory, .sales, .compare, period.currentSelection, period.compareMode, QueryFilterSet(sourceReport: ["summary-sales"]), [.territory]),
+                (.salesByDevice, .sales, .compare, period.currentSelection, period.compareMode, QueryFilterSet(sourceReport: ["summary-sales"]), [.device]),
+                (.salesByVersion, .sales, .compare, period.currentSelection, period.compareMode, QueryFilterSet(sourceReport: ["summary-sales"]), [.version]),
+                (.salesByCurrency, .sales, .compare, period.currentSelection, period.compareMode, QueryFilterSet(sourceReport: ["summary-sales"]), [.currency]),
+                (.reviewsByRating, .reviews, .compare, period.currentSelection, period.compareMode, QueryFilterSet(), [.rating]),
+                (.reviewsByTerritory, .reviews, .compare, period.currentSelection, period.compareMode, QueryFilterSet(), [.territory]),
+                (.currentSummarySales, .sales, .records, period.currentSelection, nil, QueryFilterSet(sourceReport: ["summary-sales"]), []),
+                (.previousSummarySales, .sales, .records, period.previousSelection, nil, QueryFilterSet(sourceReport: ["summary-sales"]), []),
+                (.currentSubscriptions, .sales, .records, period.currentSelection, nil, QueryFilterSet(sourceReport: ["subscription"]), []),
+                (.previousSubscriptions, .sales, .records, period.previousSelection, nil, QueryFilterSet(sourceReport: ["subscription"]), []),
+                (.currentEvents, .sales, .records, period.currentSelection, nil, QueryFilterSet(sourceReport: ["subscription-event"]), []),
+                (.previousEvents, .sales, .records, period.previousSelection, nil, QueryFilterSet(sourceReport: ["subscription-event"]), []),
+                (.currentReviews, .reviews, .records, period.currentSelection, nil, QueryFilterSet(), []),
+                (.previousReviews, .reviews, .records, period.previousSelection, nil, QueryFilterSet(), []),
+            ]
 
-        async let salesByTerritory = executeQuery(
-            dataset: .sales,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: [.territory]
-        )
-        async let salesByDevice = executeQuery(
-            dataset: .sales,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: [.device]
-        )
-        async let salesByVersion = executeQuery(
-            dataset: .sales,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: [.version]
-        )
-        async let salesByCurrency = executeQuery(
-            dataset: .sales,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: [.currency]
-        )
-        async let reviewsByRating = executeQuery(
-            dataset: .reviews,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(),
-            groupBy: [.rating]
-        )
-        async let reviewsByTerritory = executeQuery(
-            dataset: .reviews,
-            operation: .compare,
-            time: period.currentSelection,
-            compare: period.compareMode,
-            filters: QueryFilterSet(),
-            groupBy: [.territory]
-        )
-        async let financeByTerritory = loadFinanceBreakdown(period: period, groupBy: .territory)
-        async let financeByCurrency = loadFinanceBreakdown(period: period, groupBy: .currency)
+            for (slot, dataset, operation, time, compare, filters, groupBy) in queries {
+                group.addTask { [self] in
+                    let result = try await self.executeQuery(
+                        dataset: dataset, operation: operation,
+                        time: time, compare: compare,
+                        filters: filters, groupBy: groupBy
+                    )
+                    return (slot, result)
+                }
+            }
 
-        async let currentSummarySales = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.currentSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: []
-        )
-        async let previousSummarySales = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.previousSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["summary-sales"]),
-            groupBy: []
-        )
+            var results: [BriefSlot: QueryResult] = [:]
+            for try await (slot, result) in group {
+                results[slot] = result
+            }
+            return results
+        }
 
-        async let currentSubscriptions = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.currentSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["subscription"]),
-            groupBy: []
-        )
-        async let previousSubscriptions = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.previousSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["subscription"]),
-            groupBy: []
-        )
+        // Finance queries run separately (they return optionals / different types).
+        let resolvedFinanceOverview = try await loadFinanceOverview(period: period)
+        let resolvedFinanceByTerritory = try await loadFinanceBreakdown(period: period, groupBy: .territory)
+        let resolvedFinanceByCurrency = try await loadFinanceBreakdown(period: period, groupBy: .currency)
+        let resolvedCurrentFinance = try await loadFinanceRecords(period: period)
 
-        async let currentEvents = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.currentSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["subscription-event"]),
-            groupBy: []
-        )
-        async let previousEvents = executeQuery(
-            dataset: .sales,
-            operation: .records,
-            time: period.previousSelection,
-            compare: nil,
-            filters: QueryFilterSet(sourceReport: ["subscription-event"]),
-            groupBy: []
-        )
-
-        async let currentReviews = executeQuery(
-            dataset: .reviews,
-            operation: .records,
-            time: period.currentSelection,
-            compare: nil,
-            filters: QueryFilterSet(),
-            groupBy: []
-        )
-        async let previousReviews = executeQuery(
-            dataset: .reviews,
-            operation: .records,
-            time: period.previousSelection,
-            compare: nil,
-            filters: QueryFilterSet(),
-            groupBy: []
-        )
-
-        async let currentFinance = loadFinanceRecords(period: period)
-
-        let resolvedSalesOverview = try await salesOverview
-        let resolvedReviewsOverview = try await reviewsOverview
-        let resolvedFinanceOverview = try await financeOverview
-        let resolvedSalesByTerritory = try await salesByTerritory
-        let resolvedSalesByDevice = try await salesByDevice
-        let resolvedSalesByVersion = try await salesByVersion
-        let resolvedSalesByCurrency = try await salesByCurrency
-        let resolvedReviewsByRating = try await reviewsByRating
-        let resolvedReviewsByTerritory = try await reviewsByTerritory
-        let resolvedFinanceByTerritory = try await financeByTerritory
-        let resolvedFinanceByCurrency = try await financeByCurrency
-        let resolvedCurrentSummarySales = try await currentSummarySales
-        let resolvedPreviousSummarySales = try await previousSummarySales
-        let resolvedCurrentSubscriptions = try await currentSubscriptions
-        let resolvedPreviousSubscriptions = try await previousSubscriptions
-        let resolvedCurrentEvents = try await currentEvents
-        let resolvedPreviousEvents = try await previousEvents
-        let resolvedCurrentReviews = try await currentReviews
-        let resolvedPreviousReviews = try await previousReviews
-        let resolvedCurrentFinance = try await currentFinance
+        let resolvedSalesOverview = slots[.salesOverview]!
+        let resolvedReviewsOverview = slots[.reviewsOverview]!
+        let resolvedSalesByTerritory = slots[.salesByTerritory]!
+        let resolvedSalesByDevice = slots[.salesByDevice]!
+        let resolvedSalesByVersion = slots[.salesByVersion]!
+        let resolvedSalesByCurrency = slots[.salesByCurrency]!
+        let resolvedReviewsByRating = slots[.reviewsByRating]!
+        let resolvedReviewsByTerritory = slots[.reviewsByTerritory]!
+        let resolvedCurrentSummarySales = slots[.currentSummarySales]!
+        let resolvedPreviousSummarySales = slots[.previousSummarySales]!
+        let resolvedCurrentSubscriptions = slots[.currentSubscriptions]!
+        let resolvedPreviousSubscriptions = slots[.previousSubscriptions]!
+        let resolvedCurrentEvents = slots[.currentEvents]!
+        let resolvedPreviousEvents = slots[.previousEvents]!
+        let resolvedCurrentReviews = slots[.currentReviews]!
+        let resolvedPreviousReviews = slots[.previousReviews]!
 
         var sections: [BriefSummarySection] = []
 
@@ -656,18 +581,24 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             startDate: min(period.currentWindow.startDate, period.previousWindow.startDate),
             endDate: max(period.currentWindow.endDate, period.previousWindow.endDate)
         )
+        // Always sync summary sales first; this must succeed.
+        _ = try await syncService.syncSalesReports(
+            window: unionWindow,
+            reportFamilies: [.summarySales],
+            force: refresh
+        )
+        // Best-effort: subscription data may be unavailable for accounts
+        // without auto-renewable subscriptions or when Apple has not yet
+        // published the report for the requested date.
         do {
             _ = try await syncService.syncSalesReports(
                 window: unionWindow,
-                reportFamilies: [.summarySales, .subscription, .subscriptionEvent],
+                reportFamilies: [.subscription, .subscriptionEvent],
                 force: refresh
             )
-        } catch let error as ASCClientError where shouldFallbackToSummaryOnly(error) {
-            _ = try await syncService.syncSalesReports(
-                window: unionWindow,
-                reportFamilies: [.summarySales],
-                force: refresh
-            )
+        } catch {
+            // Proceed without subscription data; brief sections that depend
+            // on it will render empty and be filtered out.
         }
         if period.includesFinance {
             _ = try await syncService.syncFinance(
@@ -689,22 +620,6 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             totalLimit: nil,
             query: reviewQuery
         )
-    }
-
-    private func shouldFallbackToSummaryOnly(_ error: ASCClientError) -> Bool {
-        let detail: String?
-        switch error {
-        case .httpStatus(_, let message):
-            detail = message
-        case .forbidden(let message):
-            detail = message
-        case .unauthorized(let message):
-            detail = message
-        default:
-            detail = nil
-        }
-        guard let text = detail?.lowercased() else { return false }
-        return text.contains("invalid vendor number specified")
     }
 
     private func loadFinanceOverview(period: ResolvedBriefSummaryPeriod) async throws -> QueryResult? {
