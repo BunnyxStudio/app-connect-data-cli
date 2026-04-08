@@ -23,6 +23,11 @@ jobs:
             exit 1
           fi
 
+      - name: Configure git authentication
+        run: |
+          gh auth setup-git
+          git config --global url."https://x-access-token:${GH_TOKEN}@github.com/".insteadOf "https://github.com/"
+
       - name: Resolve release version
         id: version
         run: |
