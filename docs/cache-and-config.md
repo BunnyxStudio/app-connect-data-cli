@@ -40,10 +40,14 @@ Otherwise it falls back to the user-level path.
 
 - `reports/`
 - `manifest.json`
-- `reviews/latest.json`
+- `reviews/latest-<vendor>.json`
 - cached FX rate files
 
 Analytics report downloads are stored locally as Apple returns them.
+
+Older installs may still have `reviews/latest.json`.
+
+Current builds will read that legacy reviews file during upgrade only until a vendor-specific reviews cache exists.
 
 ## Security rules
 
@@ -54,8 +58,8 @@ Analytics report downloads are stored locally as Apple returns them.
 
 ## User controls
 
+- online mode fetches fresh Apple data when credentials are available
 - `--offline` reads local cache only
-- `--refresh` re-fetches raw data from Apple
 - `cache clear` removes local cache only
 - `config currency show` prints the effective reporting currency
 - `config currency set <CODE>` saves a default reporting currency to user config
@@ -63,3 +67,11 @@ Analytics report downloads are stored locally as Apple returns them.
 - `config timezone show` prints the effective display time zone
 - `config timezone set <IANA_ID>` saves a default display time zone to user config
 - `config timezone set <IANA_ID> --local` saves a repo-local override
+
+## Currency note
+
+`currency` filters match the source report rows.
+
+Displayed monetary values are still normalized to the configured `reportingCurrency` when FX data is available.
+
+If you run summaries or aggregates with `--offline`, required FX rates must already exist in local cache.

@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+## 0.1.9 - 2026-04-11
+
+- Fixed online `compare` queries for sales, finance, and analytics so both the current and comparison windows fetch fresh data instead of mixing fresh rows with stale cache.
+- Fixed online query freshness rules so `sales`, `finance`, and `analytics` no longer silently fall back to older cached files when Apple has not returned fresh data yet.
+- Fixed sales source-report handling:
+  - `summary-sales` remains the default.
+  - mixed sales families in `aggregate` and `compare` now fail fast unless grouped by `sourceReport` or `reportType`.
+  - full-month summary queries fall back to cached daily rows when monthly rows are not available yet.
+- Fixed finance source-report handling:
+  - `financial` is now the default when `sourceReport` is omitted.
+  - mixed `financial` and `finance-detail` aggregate/compare queries now fail fast unless grouped by `sourceReport` or `reportType`.
+  - `currency` filters now match finance source rows explicitly.
+- Fixed sales and analytics filter validation so unsupported time selectors, filters, and `groupBy` values now fail fast instead of being accepted and ignored.
+- Fixed `sales`, `reviews`, `finance`, and `analytics` subcommand help so each dataset only exposes the flags that actually work for that dataset.
+- Fixed `--app-version` naming across the CLI, help output, and capability descriptions, while keeping JSON/query-spec field names stable as `version`.
+- Fixed analytics report selection and parsing:
+  - recent queries now prefer `ONGOING`, yearly queries prefer `ONE_TIME_SNAPSHOT`.
+  - missing request/report/instance paths now emit explicit waiting warnings.
+  - quoted CSV fields and numeric app/version dimensions now parse correctly.
+  - rows without a valid date are now rejected instead of leaking into arbitrary windows.
+- Fixed analytics app filtering so bundle ID and app ID queries stay exact online and offline, and same-named sibling apps no longer leak into results.
+- Fixed analytics cache identity and deduplication so newer segment refreshes replace older rows instead of double-counting them, while shared checksums from different apps remain separate.
+- Fixed vendor-scoped cache isolation for sales, reviews, finance, and analytics:
+  - offline reads now prefer the configured vendor.
+  - safe legacy cache reuse still works during upgrades.
+  - ambiguous multi-account cache mixes now fail fast instead of returning wrong results.
+- Fixed reviews behavior:
+  - `rating` and `response-state` filters now apply correctly.
+  - multi-app review sync now fails if any app fetch fails instead of silently returning partial data.
+  - vendor-scoped review caches are now read and written consistently, including upgrade fallback rules.
+- Fixed subscription report filtering and grouping:
+  - `subscription`, `subscription-event`, and `subscriber` now honor `sku`.
+  - app and subscription Apple IDs now work in filters.
+  - same-named apps and subscriptions no longer collapse into one aggregate group.
+- Fixed `brief` / `overview` data integrity:
+  - subscription snapshots now keep the latest row per entity instead of using one global latest date.
+  - sales and review coverage now reflect actual loaded dates.
+  - summaries now warn when the current window has no source data instead of implying confirmed zero activity.
+  - summary warm-up now preserves subscription and finance warnings instead of swallowing them.
+- Fixed output and support ergonomics:
+  - empty tables now render a clear no-data message.
+  - review tables no longer duplicate or expose misleading raw rating columns.
+  - warning codes are now surfaced in text output and issue templates for easier triage.
+- Fixed the daily rollover baseline to `5 am PT` so default date presets match the documented Apple availability guidance.
+- Added stronger offline/example/test coverage for cache ambiguity, analytics identity, comparison windows, source-report validation, summary coverage, and Homebrew/release-facing CLI output.
+
 ## 0.1.8 - 2026-04-08
 
 - Added explicit platform requirements in `README.md`.

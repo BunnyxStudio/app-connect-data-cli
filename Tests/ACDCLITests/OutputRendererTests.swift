@@ -37,7 +37,7 @@ final class OutputRendererTests: XCTestCase {
             format: .table
         )
 
-        XCTAssertTrue(rendered.contains("proceeds"))
+        XCTAssertTrue(rendered.contains("Proceeds"))
         XCTAssertTrue(rendered.contains("120.00"))
     }
 
@@ -50,7 +50,7 @@ final class OutputRendererTests: XCTestCase {
                     whatYouCanQuery: ["Summary Sales"],
                     whatYouCannotQuery: ["User profiles"],
                     timeSupport: ["date"],
-                    filterSupport: ["app", "territory"],
+                    filterSupport: ["app", "version", "sourceReport", "responseState"],
                     notes: ["Apple-only"]
                 )
             ],
@@ -58,7 +58,11 @@ final class OutputRendererTests: XCTestCase {
         )
 
         XCTAssertTrue(rendered.contains("# Capabilities"))
-        XCTAssertTrue(rendered.contains("`sales`"))
+        XCTAssertTrue(rendered.contains("## Sales"))
+        XCTAssertTrue(rendered.contains("Time: date"))
+        XCTAssertTrue(rendered.contains("app-version"))
+        XCTAssertTrue(rendered.contains("source-report"))
+        XCTAssertTrue(rendered.contains("response-state"))
     }
 
     func testTableRenderIncludesWarningsForQueryResult() throws {
@@ -86,8 +90,8 @@ final class OutputRendererTests: XCTestCase {
             format: .table
         )
 
-        XCTAssertTrue(rendered.contains("proceeds"))
-        XCTAssertTrue(rendered.contains("Warning: Monetary metrics are normalized to CNY."))
+        XCTAssertTrue(rendered.contains("Proceeds"))
+        XCTAssertTrue(rendered.contains("Warning [currency-normalized]: Monetary metrics are normalized to CNY."))
     }
 
     func testTableRenderAddsBlankLineAroundOutput() throws {
@@ -99,7 +103,7 @@ final class OutputRendererTests: XCTestCase {
             format: .table
         )
 
-        XCTAssertTrue(rendered.hasPrefix("\nmetric"))
+        XCTAssertTrue(rendered.hasPrefix("\nMetric"))
         XCTAssertTrue(rendered.hasSuffix("\n"))
     }
 
@@ -141,7 +145,81 @@ final class OutputRendererTests: XCTestCase {
         XCTAssertTrue(rendered.contains("==== Overview ===="))
         XCTAssertTrue(rendered.contains("==== Top Products ===="))
         XCTAssertTrue(rendered.contains("Time basis: Apple business dates use PT."))
-        XCTAssertTrue(rendered.contains("Warning: Monetary metrics are normalized to CNY."))
-        XCTAssertTrue(rendered.contains("==== Overview ====\n\nImportant metrics.\n\nmetric"))
+        XCTAssertTrue(rendered.contains("Warning [fx]: Monetary metrics are normalized to CNY."))
+        XCTAssertTrue(rendered.contains("==== Overview ====\n\nImportant metrics.\n\nMetric"))
+    }
+
+    func testTableRenderHumanizesTableHeaders() throws {
+        let rendered = try OutputRenderer.render(
+            QueryResult(
+                dataset: .reviews,
+                operation: .compare,
+                time: QueryTimeEnvelope(label: "last week", startDatePT: "2026-02-10", endDatePT: "2026-02-16"),
+                filters: QueryFilterSet(),
+                source: ["customer-reviews"],
+                data: QueryResultData(comparisons: []),
+                tableModel: TableModel(
+                    title: "reviews",
+                    columns: ["sourceReport", "averageRating current", "averageRating delta%"],
+                    rows: [["customer-reviews", "4.60", "+3.0%"]]
+                )
+            ),
+            format: .table
+        )
+
+        XCTAssertTrue(rendered.contains("==== Reviews ===="))
+        XCTAssertTrue(rendered.contains("Source Report"))
+        XCTAssertTrue(rendered.contains("Average Rating (Current)"))
+        XCTAssertTrue(rendered.contains("Average Rating (% Change)"))
+    }
+
+    func testEmptyQueryResultShowsNoDataState() throws {
+        let table = try OutputRenderer.render(
+            QueryResult(
+                dataset: .reviews,
+                operation: .aggregate,
+                time: QueryTimeEnvelope(label: "last week", startDatePT: "2026-02-10", endDatePT: "2026-02-16"),
+                filters: QueryFilterSet(),
+                source: ["customer-reviews"],
+                data: QueryResultData(aggregates: []),
+                tableModel: TableModel(columns: [], rows: [])
+            ),
+            format: .table
+        )
+        let markdown = try OutputRenderer.render(
+            QueryResult(
+                dataset: .reviews,
+                operation: .aggregate,
+                time: QueryTimeEnvelope(label: "last week", startDatePT: "2026-02-10", endDatePT: "2026-02-16"),
+                filters: QueryFilterSet(),
+                source: ["customer-reviews"],
+                data: QueryResultData(aggregates: []),
+                tableModel: TableModel(columns: [], rows: [])
+            ),
+            format: .markdown
+        )
+
+        XCTAssertTrue(table.contains("No data for the selected query."))
+        XCTAssertTrue(markdown.contains("No data for the selected query."))
+    }
+
+    func testEmptyTitledTableModelStillShowsNoDataState() throws {
+        let rendered = try OutputRenderer.render(
+            QueryResult(
+                dataset: .analytics,
+                operation: .records,
+                time: QueryTimeEnvelope(label: "today", startDatePT: "2026-04-09", endDatePT: "2026-04-09"),
+                filters: QueryFilterSet(),
+                source: ["usage"],
+                data: QueryResultData(records: []),
+                warnings: [QueryWarning(code: "analytics-privacy", message: "Privacy thresholds may omit rows.")],
+                tableModel: TableModel(title: "analytics", columns: [], rows: [])
+            ),
+            format: .table
+        )
+
+        XCTAssertTrue(rendered.contains("No data for the selected query."))
+        XCTAssertTrue(rendered.contains("Warning [analytics-privacy]: Privacy thresholds may omit rows."))
+        XCTAssertFalse(rendered.contains("==== Analytics ===="))
     }
 }

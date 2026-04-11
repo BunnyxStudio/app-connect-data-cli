@@ -15,6 +15,20 @@
 import Foundation
 import ACDCore
 
+public enum CacheStoreError: LocalizedError {
+    case ambiguousLegacyReviewsCache
+    case ambiguousScopedReviewsCache
+
+    public var errorDescription: String? {
+        switch self {
+        case .ambiguousLegacyReviewsCache:
+            return "Cached reviews mix legacy latest.json with vendor-scoped review caches for multiple accounts. Clear the reviews cache or resync before querying."
+        case .ambiguousScopedReviewsCache:
+            return "Cached reviews contain multiple vendor-scoped snapshots. Set vendorNumber or clear the reviews cache before querying."
+        }
+    }
+}
+
 public struct CachedReportRecord: Codable, Identifiable, Equatable, Sendable {
     public var id: String
     public var source: ReportSource
@@ -22,6 +36,8 @@ public struct CachedReportRecord: Codable, Identifiable, Equatable, Sendable {
     public var reportSubType: String
     public var reportDateKey: String
     public var vendorNumber: String
+    public var appID: String?
+    public var bundleID: String?
     public var queryHash: String
     public var filePath: String
     public var fetchedAt: Date
@@ -33,6 +49,8 @@ public struct CachedReportRecord: Codable, Identifiable, Equatable, Sendable {
         reportSubType: String,
         reportDateKey: String,
         vendorNumber: String,
+        appID: String? = nil,
+        bundleID: String? = nil,
         queryHash: String,
         filePath: String,
         fetchedAt: Date
@@ -43,6 +61,8 @@ public struct CachedReportRecord: Codable, Identifiable, Equatable, Sendable {
         self.reportSubType = reportSubType
         self.reportDateKey = reportDateKey
         self.vendorNumber = vendorNumber
+        self.appID = appID
+        self.bundleID = bundleID
         self.queryHash = queryHash
         self.filePath = filePath
         self.fetchedAt = fetchedAt
@@ -78,6 +98,13 @@ public final class CacheStore: @unchecked Sendable {
 
     public var reviewsURL: URL {
         reviewsDirectory.appendingPathComponent("latest.json")
+    }
+
+    public func reviewsURL(vendorNumber: String?) -> URL {
+        guard let vendorNumber = normalizedVendorNumber(vendorNumber) else {
+            return reviewsURL
+        }
+        return reviewsDirectory.appendingPathComponent("latest-\(vendorNumber).json")
     }
 
     public var manifestURL: URL {
@@ -116,6 +143,7 @@ public final class CacheStore: @unchecked Sendable {
                 report.reportType,
                 report.reportSubType,
                 report.reportDateKey,
+                report.vendorNumber,
                 report.queryHash
             ].joined(separator: "|")
             let record = CachedReportRecord(
@@ -125,6 +153,8 @@ public final class CacheStore: @unchecked Sendable {
                 reportSubType: report.reportSubType,
                 reportDateKey: report.reportDateKey,
                 vendorNumber: report.vendorNumber,
+                appID: report.appID,
+                bundleID: report.bundleID,
                 queryHash: report.queryHash,
                 filePath: report.fileURL.path,
                 fetchedAt: fetchedAt
@@ -151,17 +181,20 @@ public final class CacheStore: @unchecked Sendable {
         return try JSONDecoder.iso8601.decode([CachedReportRecord].self, from: data)
     }
 
-    public func saveReviews(_ payload: CachedReviewsPayload) throws {
+    public func saveReviews(_ payload: CachedReviewsPayload, vendorNumber: String? = nil) throws {
         try prepare()
         let data = try JSONEncoder.pretty.encode(payload)
-        try LocalFileSecurity.writePrivateData(data, to: reviewsURL, fileManager: fileManager)
+        try LocalFileSecurity.writePrivateData(data, to: reviewsURL(vendorNumber: vendorNumber), fileManager: fileManager)
     }
 
-    public func loadReviews() throws -> CachedReviewsPayload? {
-        guard fileManager.fileExists(atPath: reviewsURL.path) else { return nil }
-        try LocalFileSecurity.validateOwnerOnlyFile(reviewsURL, fileManager: fileManager)
-        let data = try Data(contentsOf: reviewsURL)
-        return try JSONDecoder.iso8601.decode(CachedReviewsPayload.self, from: data)
+    public func loadReviews(vendorNumber: String? = nil) throws -> CachedReviewsPayload? {
+        for url in try reviewLoadCandidates(vendorNumber: vendorNumber) {
+            guard fileManager.fileExists(atPath: url.path) else { continue }
+            try LocalFileSecurity.validateOwnerOnlyFile(url, fileManager: fileManager)
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder.iso8601.decode(CachedReviewsPayload.self, from: data)
+        }
+        return nil
     }
 
     public func clear() throws {
@@ -172,6 +205,47 @@ public final class CacheStore: @unchecked Sendable {
     private func saveManifest(_ manifest: [CachedReportRecord]) throws {
         let data = try JSONEncoder.pretty.encode(manifest)
         try LocalFileSecurity.writePrivateData(data, to: manifestURL, fileManager: fileManager)
+    }
+
+    private func normalizedVendorNumber(_ vendorNumber: String?) -> String? {
+        guard let vendorNumber else { return nil }
+        let trimmed = vendorNumber.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func reviewLoadCandidates(vendorNumber: String?) throws -> [URL] {
+        guard normalizedVendorNumber(vendorNumber) != nil else {
+            let scopedURLs = (((try? fileManager.contentsOfDirectory(at: reviewsDirectory, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.lastPathComponent.hasPrefix("latest-") && $0.pathExtension == "json" })
+                .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            if fileManager.fileExists(atPath: reviewsURL.path) {
+                if scopedURLs.isEmpty {
+                    return [reviewsURL]
+                }
+                throw CacheStoreError.ambiguousLegacyReviewsCache
+            }
+            if scopedURLs.count > 1 {
+                throw CacheStoreError.ambiguousScopedReviewsCache
+            }
+            return scopedURLs
+        }
+
+        let scopedURL = reviewsURL(vendorNumber: vendorNumber)
+        if fileManager.fileExists(atPath: scopedURL.path) {
+            return [scopedURL]
+        }
+
+        guard fileManager.fileExists(atPath: reviewsURL.path) else {
+            return [scopedURL]
+        }
+
+        let hasScopedReviewCaches = ((try? fileManager.contentsOfDirectory(atPath: reviewsDirectory.path)) ?? []).contains {
+            $0.hasPrefix("latest-") && $0.hasSuffix(".json")
+        }
+        if hasScopedReviewCaches {
+            throw CacheStoreError.ambiguousLegacyReviewsCache
+        }
+        return [scopedURL, reviewsURL]
     }
 }
 

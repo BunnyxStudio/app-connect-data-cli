@@ -130,6 +130,196 @@ final class ASCClientTests: XCTestCase {
         XCTAssertEqual(reviews.map(\.id), ["r1", "r2"])
         XCTAssertGreaterThanOrEqual(maxInFlight, 2)
     }
+
+    func testFetchLatestCustomerReviewsThrowsWhenAnyAppFails() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        StubURLProtocol.requestHandler = { request in
+            guard let url = request.url else {
+                throw URLError(.badURL)
+            }
+
+            if url.path == "/v1/apps" {
+                return (
+                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "1",
+                              "type": "apps",
+                              "attributes": {
+                                "name": "App One",
+                                "bundleId": "com.example.one"
+                              }
+                            },
+                            {
+                              "id": "2",
+                              "type": "apps",
+                              "attributes": {
+                                "name": "App Two",
+                                "bundleId": "com.example.two"
+                              }
+                            }
+                          ]
+                        }
+                        """.utf8
+                    )
+                )
+            }
+
+            if url.path == "/v1/apps/1/customerReviews" {
+                return (
+                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "r1",
+                              "type": "customerReviews",
+                              "attributes": {
+                                "rating": 5,
+                                "title": "Great",
+                                "body": "Nice",
+                                "reviewerNickname": "A",
+                                "territory": "US",
+                                "createdDate": "2026-04-07T00:00:00Z"
+                              }
+                            }
+                          ]
+                        }
+                        """.utf8
+                    )
+                )
+            }
+
+            if url.path == "/v1/apps/2/customerReviews" {
+                return (
+                    HTTPURLResponse(url: url, statusCode: 500, httpVersion: nil, headerFields: nil)!,
+                    Data("{}".utf8)
+                )
+            }
+
+            throw URLError(.unsupportedURL)
+        }
+
+        let client = ASCClient(session: session, tokenProvider: { "TEST_TOKEN" })
+
+        do {
+            _ = try await client.fetchLatestCustomerReviews(maxApps: 2, pageLimit: 200)
+            XCTFail("Expected mixed review fetch failures to throw.")
+        } catch let error as ASCClientError {
+            guard case .httpStatus(500, _) = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testFetchLatestCustomerReviewsIgnoresIntentionalCancellationAfterTotalLimit() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+
+        StubURLProtocol.requestHandler = { request in
+            guard let url = request.url else {
+                throw URLError(.badURL)
+            }
+
+            if url.path == "/v1/apps" {
+                return (
+                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "1",
+                              "type": "apps",
+                              "attributes": {
+                                "name": "App One",
+                                "bundleId": "com.example.one"
+                              }
+                            },
+                            {
+                              "id": "2",
+                              "type": "apps",
+                              "attributes": {
+                                "name": "App Two",
+                                "bundleId": "com.example.two"
+                              }
+                            }
+                          ]
+                        }
+                        """.utf8
+                    )
+                )
+            }
+
+            if url.path == "/v1/apps/1/customerReviews" {
+                return (
+                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "r1",
+                              "type": "customerReviews",
+                              "attributes": {
+                                "rating": 5,
+                                "title": "Great",
+                                "body": "Nice",
+                                "reviewerNickname": "A",
+                                "territory": "US",
+                                "createdDate": "2026-04-07T00:00:00Z"
+                              }
+                            }
+                          ]
+                        }
+                        """.utf8
+                    )
+                )
+            }
+
+            if url.path == "/v1/apps/2/customerReviews" {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                return (
+                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data(
+                        """
+                        {
+                          "data": [
+                            {
+                              "id": "r2",
+                              "type": "customerReviews",
+                              "attributes": {
+                                "rating": 4,
+                                "title": "Good",
+                                "body": "Solid",
+                                "reviewerNickname": "B",
+                                "territory": "JP",
+                                "createdDate": "2026-04-06T00:00:00Z"
+                              }
+                            }
+                          ]
+                        }
+                        """.utf8
+                    )
+                )
+            }
+
+            throw URLError(.unsupportedURL)
+        }
+
+        let client = ASCClient(session: session, tokenProvider: { "TEST_TOKEN" })
+        let reviews = try await client.fetchLatestCustomerReviews(maxApps: 2, totalLimit: 1, pageLimit: 200)
+
+        XCTAssertEqual(reviews.map(\.id), ["r1"])
+    }
 }
 
 private actor ReviewConcurrencyProbe {

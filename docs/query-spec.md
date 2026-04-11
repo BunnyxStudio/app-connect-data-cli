@@ -36,13 +36,21 @@
 
 ## Time fields
 
-- `datePT`
-- `startDatePT`
-- `endDatePT`
-- `rangePreset`
-- `year`
-- `fiscalMonth`
-- `fiscalYear`
+Use only the selectors supported by the current dataset.
+
+- `sales`, `reviews`, `analytics`
+  - `datePT`
+  - `startDatePT`
+  - `endDatePT`
+  - `rangePreset`
+  - `year`
+- `finance`
+  - `fiscalMonth`
+  - `fiscalYear`
+  - `rangePreset`
+  - `year` is accepted as a compatibility alias for `fiscalYear`
+- `brief`
+  - `rangePreset` only
 
 Supported presets:
 
@@ -71,39 +79,79 @@ Supported presets:
 
 ## Filters
 
-Supported keys:
+Use only the filters supported by the current dataset.
 
-- `app`
-- `version`
-- `territory`
-- `currency`
-- `device`
-- `sku`
-- `subscription`
-- `platform`
-- `sourceReport`
-- `rating`
-- `responseState`
+- `sales`
+  - all sales reports:
+    - `app`
+    - `territory`
+    - `currency`
+    - `device`
+    - `sku`
+    - `sourceReport`
+  - `summary-sales`, `pre-order`, `subscription-offer-redemption` only:
+    - `version`
+  - `subscription`, `subscription-event`, `subscriber` only:
+    - `subscription`
+- `reviews`
+  - `app`
+  - `territory`
+  - `rating`
+  - `responseState`
+  - `sourceReport`
+- `finance`
+  - `territory`
+  - `currency`
+  - `sku`
+  - `sourceReport`
+- `analytics`
+  - all analytics reports:
+    - `app`
+    - `territory`
+    - `device`
+    - `platform`
+    - `sourceReport`
+  - `acquisition`, `usage`, `performance` only:
+    - `version`
+
+For `sales` and `finance`, `currency` matches source rows.
+
+Displayed monetary values are still normalized to the configured reporting currency when FX data is available.
 
 ## Group by
 
-Supported values:
+`groupBy` is only valid with `aggregate` and `compare`.
+
+Unsupported values now fail fast.
+
+Common values:
 
 - `day`
 - `week`
 - `month`
 - `fiscalMonth`
 - `app`
-- `version`
 - `territory`
-- `device`
-- `sku`
-- `rating`
-- `responseState`
 - `reportType`
-- `platform`
 - `sourceReport`
-- `subscription`
+
+Dataset-specific values:
+
+- `sales`
+  - `version` for `summary-sales`, `pre-order`, `subscription-offer-redemption`
+  - `currency`, `device`, `sku` across all sales report families
+  - `subscription` for `subscription`, `subscription-event`, `subscriber`
+- `reviews`: `rating`, `responseState`
+- `finance`: `currency`, `sku`
+- `analytics`
+  - `device`, `platform` across all analytics report families
+  - `version` for `acquisition`, `usage`, `performance`
+
+If you request multiple `sales` source reports for `aggregate` or `compare`, include `sourceReport` or `reportType` in `groupBy`.
+
+Finance defaults to `financial` when `sourceReport` is omitted.
+
+If you request both `financial` and `finance-detail` for `aggregate` or `compare`, include `sourceReport` or `reportType` in `groupBy`.
 
 ## Response shape
 
@@ -140,6 +188,12 @@ Supported `brief` presets:
 - `last-7d`
 - `last-30d`
 - `last-month`
+
+Shortcut mapping:
+
+- `adc overview daily` and `adc brief daily` map to `last-day`
+- `adc overview weekly` and `adc brief weekly` map to `this-week`
+- `adc overview monthly` and `adc brief monthly` map to `this-month`
 
 Do not send:
 

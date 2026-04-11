@@ -32,7 +32,9 @@ adc auth validate --output table
 adc overview daily
 ```
 
-If `auth validate` passes, your setup is done.
+If `auth validate` passes, your credentials are valid.
+
+Your first analytics query may still return a waiting warning until Apple creates and publishes the first Analytics report instance.
 
 ## Navigation
 
@@ -50,7 +52,7 @@ What this CLI does:
 - Human-friendly summary output via `adc overview ...` and `adc brief ...`
 - Stable JSON output via `adc query run --spec`
 - Monetary metrics normalized to your configured reporting currency
-- Local cache reuse with optional on-demand refresh
+- Fresh online reads with optional cache-only reruns
 
 What this CLI does not do:
 
@@ -212,16 +214,88 @@ adc brief last-month --output markdown
 adc finance aggregate --fiscal-month 2026-03 --group-by territory --group-by currency --output table
 ```
 
+Finance defaults to the consolidated `FINANCIAL` report. Add `--source-report finance-detail` when you need row-level detail.
+
 ### Local cron scheduling
 
 Who this is for: users who want unattended local report generation.
 
-Run after the local rollover shown by `adc config timezone show`:
+Run after the daily rollover shown inside `adc overview ...` or `adc brief ...`.
+
+`adc config timezone show` only tells you which display time zone the summaries use.
+
+Use the installed `adc` binary via its absolute path.
+
+If you rely on repo-local `./.app-connect-data-cli`, keep cron running from the repo root:
 
 ```bash
-15 20 * * 1-5 cd /path/to/app-store-connect-data-cli && ./.build/release/adc overview daily --output markdown > reports/daily.md
-30 20 * * 1 cd /path/to/app-store-connect-data-cli && ./.build/release/adc overview weekly --output markdown > reports/weekly.md
-45 20 1 * * cd /path/to/app-store-connect-data-cli && ./.build/release/adc brief last-month --output markdown > reports/last-month.md
+15 20 * * 1-5 cd /path/to/app-store-connect-data-cli && /absolute/path/to/adc overview daily --output markdown > /path/to/reports/daily.md
+30 20 * * 1 cd /path/to/app-store-connect-data-cli && /absolute/path/to/adc overview weekly --output markdown > /path/to/reports/weekly.md
+45 20 1 * * cd /path/to/app-store-connect-data-cli && /absolute/path/to/adc brief last-month --output markdown > /path/to/reports/last-month.md
+```
+
+## Example Output
+
+Example `adc overview daily --output table`:
+
+```text
+==== Daily Summary ====
+
+Current: latest complete day (2026-04-09 PT)
+
+Compare: previous complete day (2026-04-08 PT)
+
+Currency: USD
+
+Time basis: Apple business dates use PT. Next daily rollover in America/Los_Angeles: 2026-04-11 05:00 PDT.
+
+==== Overview ====
+
+Subscription metrics use the latest snapshot inside each range.
+
+Metric                | Current  | Compare  | % Change
+----------------------|----------|----------|---------
+Sales Proceeds        | USD 0.00 | USD 0.00 | 0.00%
+Install Units         | 0        | 0        | 0.00%
+Active Subscriptions  | 0        | 0        | 0.00%
+Average Rating        | 0.00     | 0.00     | 0.00%
+
+==== Data Health ====
+
+Item                        | Value
+----------------------------|-------------------------
+Reporting Currency          | USD
+Display Time Zone           | America/Los_Angeles
+Current Range               | 2026-04-09 to 2026-04-09
+Compare Range               | 2026-04-08 to 2026-04-08
+```
+
+Example `adc brief last-month --output markdown`:
+
+```markdown
+# Last Month Summary
+
+- Current: previous full month
+- Compare: month before last
+- Currency: USD
+- Time basis: Apple business dates use PT.
+
+## Overview
+
+| Metric | Current | Compare | % Change |
+| --- | --- | --- | --- |
+| Sales Proceeds | USD 2,481.20 | USD 2,302.70 | +7.75% |
+| Finance Proceeds | USD 2,430.10 | USD 2,260.50 | +7.50% |
+| Active Subscriptions | 9,842 | 9,511 | +3.48% |
+
+## Data Health
+
+| Item | Value |
+| --- | --- |
+| Reporting Currency | USD |
+| Current Range | 2026-03-01 to 2026-03-31 |
+| Sales Coverage Days | 31 |
+| Finance Fiscal Month | 2026-03 |
 ```
 
 ## Command Reference
@@ -271,8 +345,8 @@ For capability boundaries, see [docs/capabilities.md](./docs/capabilities.md).
 
 Cache controls:
 
-- Use `--offline` for cache-only reads
-- Use `--refresh` to ignore cached raw files and fetch again
+- Online queries fetch fresh data when credentials are available
+- Use `--offline` for cache-only reads and reproducible reruns
 
 There is no public `sync` command in the default workflow.
 
@@ -296,6 +370,28 @@ A common Apple not-ready response is:
 Treat this as "not published yet", not zero activity.
 
 Use `--offline` if you want cache-only reads.
+
+If you use `--offline` with summaries or aggregates that normalize mixed currencies, local FX rates must already be cached.
+
+If local FX is missing, either:
+
+- run once without `--offline` to cache FX
+- or set `reportingCurrency` to a currency that does not need conversion for your query
+
+### Analytics not ready does not mean zero
+
+Sales or reviews data existing does not guarantee analytics files exist yet.
+
+A not-ready analytics warning usually means one of these:
+
+- Apple has not created the report request yet
+- Apple created the request, but has not published the first report
+- Apple has not published the requested daily, weekly, or monthly instance yet
+- Apple suppressed or delayed the report because of coverage or completeness rules
+
+Treat `analytics-request-missing`, `analytics-report-missing`, and `analytics-instance-missing` as a waiting state, not as zero activity.
+
+`analytics-privacy` means Apple may omit rows or metric values even when a report exists. That is a data caveat, not a waiting state.
 
 Display time zone comes from:
 
@@ -377,7 +473,7 @@ Cached content includes:
 
 - Raw Apple report files
 - `manifest.json`
-- `reviews/latest.json`
+- `reviews/latest-<vendor>.json`
 - Cached FX rates
 
 More details: [docs/cache-and-config.md](./docs/cache-and-config.md).
@@ -398,6 +494,12 @@ Optional end-to-end smoke (requires real App Store Connect credentials and netwo
 
 ## Support
 
+- Before opening an issue:
+  - run `adc --version`
+  - re-run once with `--output json`
+  - include the warning `code` if one is present
+  - say whether you used live mode or `--offline`
+  - if the failure was offline, say whether local FX rates were already cached
 - Usage questions: GitHub Discussions
 - Bugs and feature requests: GitHub Issues
 - Security issues: [SECURITY.md](./SECURITY.md)

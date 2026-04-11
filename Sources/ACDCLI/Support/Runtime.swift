@@ -103,6 +103,7 @@ enum RuntimeFactory {
                 syncService: nil,
                 analytics: AnalyticsEngine(
                     cacheStore: cacheStore,
+                    vendorNumber: config.vendorNumber,
                     reportingCurrency: config.reportingCurrency ?? "USD"
                 )
             )
@@ -149,13 +150,19 @@ enum RuntimeFactory {
             credentialsProvider: { credentials },
             reportsRootDirectoryURL: cacheStore.reportsDirectory
         )
-        let syncService = SyncService(cacheStore: cacheStore, downloader: downloader, client: client)
+        let syncService = SyncService(
+            cacheStore: cacheStore,
+            downloader: downloader,
+            client: client,
+            vendorNumber: config.vendorNumber
+        )
         let analytics = AnalyticsEngine(
             cacheStore: cacheStore,
             syncService: syncService,
             client: client,
             downloader: downloader
             ,
+            vendorNumber: config.vendorNumber,
             reportingCurrency: config.reportingCurrency ?? "USD"
         )
         return RuntimeContext(

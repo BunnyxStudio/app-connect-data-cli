@@ -18,7 +18,7 @@ import Foundation
 
 final class PTDateWindowTests: XCTestCase {
     func testLastDayPresetUsesLatestCompleteDayBeforeDailyRollover() throws {
-        let reference = try makePacificDate(year: 2026, month: 4, day: 7, hour: 3)
+        let reference = try makePacificDate(year: 2026, month: 4, day: 7, hour: 4)
         let window = try XCTUnwrap(resolvePTDateWindow(rangePreset: "last day", defaultPreset: nil, reference: reference))
         XCTAssertEqual(window.startDatePT, "2026-04-05")
         XCTAssertEqual(window.endDatePT, "2026-04-05")

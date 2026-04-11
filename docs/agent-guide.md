@@ -55,6 +55,13 @@ Summary semantics:
 - `brief + this-month` means month to date
 - `brief + last-month` means previous full month
 
+CLI shortcut mapping:
+
+- `adc overview daily` and `adc brief daily` map to `rangePreset: "last-day"`
+- `adc overview weekly` and `adc brief weekly` map to `rangePreset: "this-week"`
+- `adc overview monthly` and `adc brief monthly` map to `rangePreset: "this-month"`
+- `adc overview last-month` and `adc brief last-month` map to `rangePreset: "last-month"`
+
 ## Response model
 
 For `sales`, `reviews`, `finance`, and `analytics`:
@@ -89,6 +96,8 @@ Summarize this month-to-date performance. Call out whether I should also run adc
 ## Notes
 
 - Use `--offline` only for cache-only reads.
-- Use `--refresh` only when you need a fresh Apple fetch.
+- Online queries already fetch fresh Apple data when credentials are available.
 - Analytics queries may create an Apple report request on first use.
+- Sales data existing does not imply analytics files exist yet.
+- Treat `warnings` as actionable state, not as zero.
 - FX normalization may require a public exchange-rate lookup when no cached rate is available.

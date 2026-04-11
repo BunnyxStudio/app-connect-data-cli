@@ -208,6 +208,8 @@ public struct DownloadedReport: Codable, Sendable {
     public var queryHash: String
     public var reportDateKey: String
     public var vendorNumber: String
+    public var appID: String?
+    public var bundleID: String?
     public var fileURL: URL
     public var rawText: String
 
@@ -218,6 +220,8 @@ public struct DownloadedReport: Codable, Sendable {
         queryHash: String,
         reportDateKey: String,
         vendorNumber: String,
+        appID: String? = nil,
+        bundleID: String? = nil,
         fileURL: URL,
         rawText: String
     ) {
@@ -227,6 +231,8 @@ public struct DownloadedReport: Codable, Sendable {
         self.queryHash = queryHash
         self.reportDateKey = reportDateKey
         self.vendorNumber = vendorNumber
+        self.appID = appID
+        self.bundleID = bundleID
         self.fileURL = fileURL
         self.rawText = rawText
     }
@@ -306,6 +312,9 @@ public protocol ReportDownloaderProtocol {
         segment: ASCAnalyticsReportSegment,
         reportName: String,
         reportDateKey: String,
+        cacheIdentity: String,
+        appID: String,
+        bundleID: String?,
         cachePolicy: ReportCachePolicy
     ) async throws -> DownloadedReport
     func clearDiskCache() throws

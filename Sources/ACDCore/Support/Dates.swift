@@ -98,7 +98,7 @@ public struct PTReportAvailability: Equatable, Sendable {
     public var latestCompleteDate: Date
     public var nextAvailabilityDate: Date
 
-    public init(reference: Date = Date(), publishHourPT: Int = 4) {
+    public init(reference: Date = Date(), publishHourPT: Int = 5) {
         let calendar = Calendar.pacific
         let pacificToday = calendar.startOfDay(for: reference)
         let todayAvailability = calendar.date(

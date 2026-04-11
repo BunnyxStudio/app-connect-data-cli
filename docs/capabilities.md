@@ -2,6 +2,10 @@
 
 This CLI only exposes Apple-supported, read-only reporting capabilities.
 
+Unless noted otherwise, filter names below use JSON/query-spec field names such as `sourceReport` and `responseState`.
+
+The CLI flags use dashed names such as `--source-report`, `--response-state`, and `--app-version`.
+
 ## Included
 
 ### Sales and Trends reports
@@ -26,12 +30,15 @@ This CLI only exposes Apple-supported, read-only reporting capabilities.
   - `year`
 - Filters:
   - `app`
-  - `version`
   - `territory`
+  - `currency`
   - `device`
   - `sku`
-  - `subscription`
   - `sourceReport`
+- Notes:
+  - If you combine multiple sales `sourceReport` values in `aggregate` or `compare`, group by `sourceReport` or `reportType`.
+  - `summary-sales`, `pre-order`, and `subscription-offer-redemption` support `version`.
+  - `subscription`, `subscription-event`, and `subscriber` support `subscription`.
 
 ### Customer reviews
 
@@ -54,6 +61,7 @@ This CLI only exposes Apple-supported, read-only reporting capabilities.
   - `territory`
   - `rating`
   - `responseState`
+  - `sourceReport`
 
 ### Finance reports
 
@@ -71,10 +79,12 @@ This CLI only exposes Apple-supported, read-only reporting capabilities.
   - `last-month`
   - `previous-month`
 - Filters:
-  - `app`
   - `territory`
+  - `currency`
   - `sku`
   - `sourceReport`
+- Notes:
+  - Defaults to `FINANCIAL` when `sourceReport` is omitted.
 
 ### Apple Analytics Reports
 
@@ -95,11 +105,13 @@ This CLI only exposes Apple-supported, read-only reporting capabilities.
   - `year`
 - Filters:
   - `app`
-  - `version`
   - `territory`
   - `device`
   - `platform`
   - `sourceReport`
+- Notes:
+  - `engagement` does not support `version`.
+  - `acquisition`, `usage`, and `performance` support `version`.
 
 ## Excluded
 
@@ -119,6 +131,9 @@ These App Store Connect capabilities are outside this CLI:
 
 - Sales data availability depends on Apple report family and report cadence.
 - Finance is fiscal-month based.
+- Finance defaults to `financial` when `sourceReport` is omitted.
+- `currency` filters select source rows, while displayed money is normalized to your configured reporting currency.
 - Reviews are limited to Apple-provided review fields.
 - Analytics may return waiting, privacy, or completeness warnings.
 - First analytics access may create an Apple report request and wait for Apple to generate instances.
+- Sales or reviews data being present does not guarantee analytics files are available yet.

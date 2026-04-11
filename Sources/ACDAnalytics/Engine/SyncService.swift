@@ -36,16 +36,20 @@ public final class SyncService {
     private let maxConcurrentFetches = 3
     private let cacheStore: CacheStore
     private let downloader: ReportDownloader
-    private let client: ASCClient
+    private let client: ASCClientProtocol
+    private let vendorNumber: String?
 
     public init(
         cacheStore: CacheStore,
         downloader: ReportDownloader,
-        client: ASCClient
+        client: ASCClientProtocol,
+        vendorNumber: String? = nil
     ) {
         self.cacheStore = cacheStore
         self.downloader = downloader
         self.client = client
+        let normalizedVendorNumber = vendorNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.vendorNumber = normalizedVendorNumber?.isEmpty == false ? normalizedVendorNumber : nil
     }
 
     public func syncSales(
@@ -54,7 +58,7 @@ public final class SyncService {
         force: Bool
     ) async throws -> SyncSummary {
         let downloader = self.downloader
-        let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
+        let policy: ReportCachePolicy = .reloadIgnoringCache
         var operations: [@Sendable () async throws -> DownloadedReport] = []
         operations.reserveCapacity(dates.count + monthlyFiscalMonths.count)
 
@@ -95,7 +99,7 @@ public final class SyncService {
     ) async throws -> SyncSummary {
         let requested = reportFamilies.isEmpty ? [SalesReportFamily.summarySales] : reportFamilies
         let downloader = self.downloader
-        let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
+        let policy: ReportCachePolicy = .reloadIgnoringCache
         var records: [CachedReportRecord] = []
         var warnings: [QueryWarning] = []
 
@@ -147,7 +151,7 @@ public final class SyncService {
         force: Bool
     ) async throws -> SyncSummary {
         let downloader = self.downloader
-        let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
+        let policy: ReportCachePolicy = .reloadIgnoringCache
         var operations: [@Sendable () async throws -> DownloadedReport] = []
         operations.reserveCapacity(dates.count * 3)
         for date in dates {
@@ -184,7 +188,7 @@ public final class SyncService {
         force: Bool
     ) async throws -> SyncSummary {
         let downloader = self.downloader
-        let policy: ReportCachePolicy = force ? .reloadIgnoringCache : .useCached
+        let policy: ReportCachePolicy = .reloadIgnoringCache
         var operations: [@Sendable () async throws -> DownloadedReport] = []
         operations.reserveCapacity(fiscalMonths.count * regionCodes.count * reportTypes.count)
         for fiscalMonth in fiscalMonths {
@@ -238,7 +242,7 @@ public final class SyncService {
             pageLimit: 200,
             query: query
         )
-        try cacheStore.saveReviews(CachedReviewsPayload(fetchedAt: Date(), reviews: reviews))
+        try cacheStore.saveReviews(CachedReviewsPayload(fetchedAt: Date(), reviews: reviews), vendorNumber: vendorNumber)
         return SyncSummary(records: [], reviewCount: reviews.count)
     }
 

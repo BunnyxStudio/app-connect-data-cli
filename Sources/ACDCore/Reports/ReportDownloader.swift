@@ -176,19 +176,25 @@ public final class ReportDownloader: ReportDownloaderProtocol, @unchecked Sendab
         segment: ASCAnalyticsReportSegment,
         reportName: String,
         reportDateKey: String,
+        cacheIdentity: String,
+        appID: String,
+        bundleID: String?,
         cachePolicy: ReportCachePolicy
     ) async throws -> DownloadedReport {
         guard let url = segment.url else {
             throw ReportDownloaderError.invalidText
         }
-        let queryHash = (segment.checksum ?? segment.id).sha256Hex
+        let credentials = try credentialsProvider()
+        let queryHash = "\(cacheIdentity)|\(segment.checksum ?? segment.id)".sha256Hex
         return try await fetch(
             source: .analytics,
             reportType: reportName,
             reportSubType: "SEGMENT",
             reportDateKey: reportDateKey,
             queryHash: queryHash,
-            vendorNumber: "",
+            vendorNumber: credentials.vendorNumber,
+            appID: appID,
+            bundleID: bundleID,
             cachePolicy: cachePolicy
         ) {
             try await client.download(url: url)
@@ -209,6 +215,8 @@ public final class ReportDownloader: ReportDownloaderProtocol, @unchecked Sendab
         reportDateKey: String,
         queryHash: String,
         vendorNumber: String,
+        appID: String? = nil,
+        bundleID: String? = nil,
         cachePolicy: ReportCachePolicy,
         download: () async throws -> Data
     ) async throws -> DownloadedReport {
@@ -227,6 +235,8 @@ public final class ReportDownloader: ReportDownloaderProtocol, @unchecked Sendab
                 queryHash: queryHash,
                 reportDateKey: reportDateKey,
                 vendorNumber: vendorNumber,
+                appID: appID,
+                bundleID: bundleID,
                 fileURL: textURL,
                 rawText: text
             )
@@ -247,6 +257,8 @@ public final class ReportDownloader: ReportDownloaderProtocol, @unchecked Sendab
                     queryHash: queryHash,
                     reportDateKey: reportDateKey,
                     vendorNumber: vendorNumber,
+                    appID: appID,
+                    bundleID: bundleID,
                     fileURL: textURL,
                     rawText: text
                 )
@@ -273,6 +285,8 @@ public final class ReportDownloader: ReportDownloaderProtocol, @unchecked Sendab
             queryHash: queryHash,
             reportDateKey: reportDateKey,
             vendorNumber: vendorNumber,
+            appID: appID,
+            bundleID: bundleID,
             fileURL: textURL,
             rawText: text
         )

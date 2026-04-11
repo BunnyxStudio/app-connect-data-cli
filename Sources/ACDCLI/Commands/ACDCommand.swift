@@ -18,7 +18,6 @@ import ACDAnalytics
 import ArgumentParser
 
 extension QueryCompareMode: ExpressibleByArgument {}
-extension QueryGroupBy: ExpressibleByArgument {}
 
 struct GlobalOptions: ParsableArguments {
     @Option(name: .shortAndLong, help: "Output format: json, table, markdown.")
@@ -53,7 +52,7 @@ struct CredentialsOptions: ParsableArguments {
     }
 }
 
-struct TimeSelectionOptions: ParsableArguments {
+struct RangeTimeSelectionOptions: ParsableArguments {
     @Option(help: "Single Apple business date in PT, YYYY-MM-DD.")
     var date: String?
 
@@ -69,20 +68,12 @@ struct TimeSelectionOptions: ParsableArguments {
     @Option(name: .customLong("year"), help: "Calendar year.")
     var year: Int?
 
-    @Option(name: .customLong("fiscal-month"), help: "Fiscal month, YYYY-MM.")
-    var fiscalMonth: String?
-
-    @Option(name: .customLong("fiscal-year"), help: "Fiscal year.")
-    var fiscalYear: Int?
-
     func selection(defaultPreset: PTDateRangePreset? = nil) throws -> QueryTimeSelection {
         let selectors = [
             date?.isEmpty == false,
             from?.isEmpty == false || to?.isEmpty == false,
             range?.isEmpty == false,
-            year != nil,
-            fiscalMonth?.isEmpty == false,
-            fiscalYear != nil
+            year != nil
         ].filter { $0 }.count
 
         if selectors > 1 {
@@ -107,11 +98,49 @@ struct TimeSelectionOptions: ParsableArguments {
         if let year {
             return QueryTimeSelection(year: year)
         }
+        if let defaultPreset {
+            return QueryTimeSelection(rangePreset: defaultPreset.rawValue)
+        }
+        return QueryTimeSelection()
+    }
+}
+
+struct FinanceTimeSelectionOptions: ParsableArguments {
+    @Option(help: "Preset: last-month or previous-month.")
+    var range: String?
+
+    @Option(name: .customLong("fiscal-month"), help: "Fiscal month, YYYY-MM.")
+    var fiscalMonth: String?
+
+    @Option(name: .customLong("fiscal-year"), help: "Fiscal year.")
+    var fiscalYear: Int?
+
+    @Option(name: .customLong("year"), help: ArgumentHelp("Alias for --fiscal-year.", visibility: .hidden))
+    var year: Int?
+
+    func selection(defaultPreset: PTDateRangePreset? = nil) throws -> QueryTimeSelection {
+        let selectors = [
+            range?.isEmpty == false,
+            fiscalMonth?.isEmpty == false,
+            fiscalYear != nil,
+            year != nil
+        ].filter { $0 }.count
+
+        if selectors > 1 {
+            throw PTDateWindowError.conflictingSelectors
+        }
+
         if let fiscalMonth = nonEmpty(fiscalMonth) {
             return QueryTimeSelection(fiscalMonth: fiscalMonth)
         }
         if let fiscalYear {
             return QueryTimeSelection(fiscalYear: fiscalYear)
+        }
+        if let year {
+            return QueryTimeSelection(fiscalYear: year)
+        }
+        if let range = nonEmpty(range) {
+            return QueryTimeSelection(rangePreset: range)
         }
         if let defaultPreset {
             return QueryTimeSelection(rangePreset: defaultPreset.rawValue)
@@ -149,11 +178,11 @@ struct CompareOptions: ParsableArguments {
     }
 }
 
-struct FilterOptions: ParsableArguments {
+struct SalesFilterOptions: ParsableArguments {
     @Option(name: .customLong("app"), help: "App filter. Repeat for multiple values.")
     var app: [String] = []
 
-    @Option(name: .customLong("version"), help: "Version filter. Repeat for multiple values.")
+    @Option(name: .customLong("app-version"), help: "App version filter. Repeat for multiple values.")
     var version: [String] = []
 
     @Option(name: .customLong("territory"), help: "Territory filter. Repeat for multiple values.")
@@ -171,17 +200,8 @@ struct FilterOptions: ParsableArguments {
     @Option(name: .customLong("subscription"), help: "Subscription filter. Repeat for multiple values.")
     var subscription: [String] = []
 
-    @Option(name: .customLong("platform"), help: "Platform filter. Repeat for multiple values.")
-    var platform: [String] = []
-
-    @Option(name: .customLong("source-report"), help: "Source report filter. Repeat for multiple values.")
+    @Option(name: .customLong("source-report"), help: "Source report filter. Repeat. Values: summary-sales, subscription, subscription-event, subscriber, pre-order, subscription-offer-redemption.")
     var sourceReport: [String] = []
-
-    @Option(name: .customLong("rating"), help: "Rating filter. Repeat for multiple values.")
-    var rating: [Int] = []
-
-    @Option(name: .customLong("response-state"), help: "Response state filter.")
-    var responseState: String?
 
     @Option(help: "Result limit.")
     var limit: Int?
@@ -195,7 +215,34 @@ struct FilterOptions: ParsableArguments {
             device: device,
             sku: sku,
             subscription: subscription,
-            platform: platform,
+            sourceReport: sourceReport
+        )
+    }
+}
+
+struct ReviewsFilterOptions: ParsableArguments {
+    @Option(name: .customLong("app"), help: "App filter. Repeat for multiple values.")
+    var app: [String] = []
+
+    @Option(name: .customLong("territory"), help: "Territory filter. Repeat for multiple values.")
+    var territory: [String] = []
+
+    @Option(name: .customLong("source-report"), help: "Source report filter. Repeat. Only customer-reviews is supported.")
+    var sourceReport: [String] = []
+
+    @Option(name: .customLong("rating"), help: "Rating filter. Repeat. Values: 1, 2, 3, 4, 5.")
+    var rating: [Int] = []
+
+    @Option(name: .customLong("response-state"), help: "Response state filter. Values: responded, unresponded.")
+    var responseState: String?
+
+    @Option(help: "Result limit.")
+    var limit: Int?
+
+    func queryFilters() -> QueryFilterSet {
+        QueryFilterSet(
+            app: app,
+            territory: territory,
             sourceReport: sourceReport,
             rating: rating,
             responseState: responseState
@@ -203,11 +250,134 @@ struct FilterOptions: ParsableArguments {
     }
 }
 
+struct FinanceFilterOptions: ParsableArguments {
+    @Option(name: .customLong("territory"), help: "Territory filter. Repeat for multiple values.")
+    var territory: [String] = []
+
+    @Option(name: .customLong("currency"), help: "Source currency filter. Repeat for multiple values.")
+    var currency: [String] = []
+
+    @Option(name: .customLong("sku"), help: "SKU filter. Repeat for multiple values.")
+    var sku: [String] = []
+
+    @Option(name: .customLong("source-report"), help: "Source report filter. Repeat. Values: financial, finance-detail.")
+    var sourceReport: [String] = []
+
+    @Option(help: "Result limit.")
+    var limit: Int?
+
+    func queryFilters() -> QueryFilterSet {
+        QueryFilterSet(
+            territory: territory,
+            currency: currency,
+            sku: sku,
+            sourceReport: sourceReport
+        )
+    }
+}
+
+struct AnalyticsFilterOptions: ParsableArguments {
+    @Option(name: .customLong("app"), help: "App filter. Repeat for multiple values.")
+    var app: [String] = []
+
+    @Option(name: .customLong("app-version"), help: "App version filter. Repeat for multiple values.")
+    var version: [String] = []
+
+    @Option(name: .customLong("territory"), help: "Territory filter. Repeat for multiple values.")
+    var territory: [String] = []
+
+    @Option(name: .customLong("device"), help: "Device filter. Repeat for multiple values.")
+    var device: [String] = []
+
+    @Option(name: .customLong("platform"), help: "Platform filter. Repeat for multiple values.")
+    var platform: [String] = []
+
+    @Option(name: .customLong("source-report"), help: "Source report filter. Repeat. Values: acquisition, engagement, usage, performance.")
+    var sourceReport: [String] = []
+
+    @Option(help: "Result limit.")
+    var limit: Int?
+
+    func queryFilters() -> QueryFilterSet {
+        QueryFilterSet(
+            app: app,
+            version: version,
+            territory: territory,
+            device: device,
+            platform: platform,
+            sourceReport: sourceReport
+        )
+    }
+}
+
+enum SalesGroupBy: String, CaseIterable, ExpressibleByArgument {
+    case day
+    case week
+    case month
+    case fiscalMonth
+    case app
+    case version
+    case territory
+    case currency
+    case device
+    case sku
+    case subscription
+    case reportType
+    case sourceReport
+
+    var queryValue: QueryGroupBy { QueryGroupBy(rawValue: rawValue)! }
+}
+
+enum ReviewsGroupBy: String, CaseIterable, ExpressibleByArgument {
+    case day
+    case week
+    case month
+    case fiscalMonth
+    case app
+    case territory
+    case rating
+    case responseState
+    case reportType
+    case sourceReport
+
+    var queryValue: QueryGroupBy { QueryGroupBy(rawValue: rawValue)! }
+}
+
+enum FinanceGroupBy: String, CaseIterable, ExpressibleByArgument {
+    case day
+    case week
+    case month
+    case fiscalMonth
+    case territory
+    case currency
+    case sku
+    case reportType
+    case sourceReport
+
+    var queryValue: QueryGroupBy { QueryGroupBy(rawValue: rawValue)! }
+}
+
+enum AnalyticsGroupBy: String, CaseIterable, ExpressibleByArgument {
+    case day
+    case week
+    case month
+    case fiscalMonth
+    case app
+    case version
+    case territory
+    case device
+    case platform
+    case reportType
+    case sourceReport
+
+    var queryValue: QueryGroupBy { QueryGroupBy(rawValue: rawValue)! }
+}
+
 struct FetchControlOptions: ParsableArguments {
     @Flag(help: "Read local cache only.")
     var offline = false
 
-    @Flag(help: "Refresh cached data when credentials are available.")
+    @Flag(help: ArgumentHelp("Compatibility flag. Online queries already fetch fresh data when credentials are available.", visibility: .hidden))
     var refresh = false
 }
 
@@ -260,21 +430,21 @@ private func makeRuntime(
 private func makeSpec(
     dataset: QueryDataset,
     operation: QueryOperation,
-    time: TimeSelectionOptions,
-    filters: FilterOptions,
+    time: QueryTimeSelection,
+    filters: QueryFilterSet,
     compare: CompareOptions?,
     groupBy: [QueryGroupBy],
-    defaultPreset: PTDateRangePreset
+    limit: Int?,
 ) throws -> DataQuerySpec {
     DataQuerySpec(
         dataset: dataset,
         operation: operation,
-        time: try time.selection(defaultPreset: defaultPreset),
+        time: time,
         compare: try compare?.mode(),
         compareTime: compare?.customSelection(),
-        filters: filters.queryFilters(),
+        filters: filters,
         groupBy: groupBy,
-        limit: filters.limit
+        limit: limit
     )
 }
 
@@ -290,7 +460,19 @@ private func executeBriefSummary(
     try OutputRenderer.write(report, format: output)
 }
 
-private let adcVersion = "0.1.8"
+private let adcVersion = "0.1.9"
+private let salesSourceReportDiscussion = """
+Source-report caveats:
+  summary-sales, pre-order, subscription-offer-redemption support app-version, currency, device, and sku filters.
+  subscription, subscription-event, and subscriber support subscription, currency, device, and sku filters.
+  Not every sales source-report supports every filter or group-by. Unsupported combinations fail fast.
+"""
+private let analyticsSourceReportDiscussion = """
+Source-report caveats:
+  acquisition, usage, and performance support --app-version and group-by version.
+  engagement does not support --app-version or group-by version.
+  Unsupported source-report and filter/group-by combinations fail fast.
+"""
 
 @main
 @available(macOS 10.15, *)
@@ -570,10 +752,11 @@ private extension DatasetCommand where Self: AsyncParsableCommand {
         operation: QueryOperation,
         global: GlobalOptions,
         credentials: CredentialsOptions,
-        time: TimeSelectionOptions,
-        filters: FilterOptions,
+        time: QueryTimeSelection,
+        filters: QueryFilterSet,
         compare: CompareOptions?,
         groupBy: [QueryGroupBy],
+        limit: Int?,
         fetch: FetchControlOptions
     ) async throws {
         let runtime = try makeRuntime(credentials: credentials, offline: fetch.offline)
@@ -584,7 +767,7 @@ private extension DatasetCommand where Self: AsyncParsableCommand {
             filters: filters,
             compare: compare,
             groupBy: groupBy,
-            defaultPreset: Self.defaultPreset
+            limit: limit
         )
         let result = try await runtime.analytics.execute(spec: spec, offline: fetch.offline, refresh: fetch.refresh)
         try OutputRenderer.write(result, format: global.output)
@@ -593,49 +776,91 @@ private extension DatasetCommand where Self: AsyncParsableCommand {
 
 extension ACDCommand.Sales {
     struct Records: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show raw sales rows for the selected time window.",
+            discussion: salesSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .sales
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: SalesFilterOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .records, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: [], fetch: fetch)
+            try await executeDataset(
+                operation: .records,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: [],
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
     struct Aggregate: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Aggregate sales rows for the selected time window.",
+            discussion: salesSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .sales
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: SalesFilterOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [SalesGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .aggregate, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .aggregate,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
     struct Compare: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Compare sales aggregates across two time windows.",
+            discussion: salesSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .sales
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: SalesFilterOptions
         @OptionGroup var compare: CompareOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [SalesGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .compare, global: global, credentials: credentials, time: time, filters: filters, compare: compare, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .compare,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: compare,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 }
@@ -646,12 +871,22 @@ extension ACDCommand.Reviews {
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: ReviewsFilterOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .records, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: [], fetch: fetch)
+            try await executeDataset(
+                operation: .records,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: [],
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
@@ -660,14 +895,24 @@ extension ACDCommand.Reviews {
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: ReviewsFilterOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [ReviewsGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .aggregate, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .aggregate,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
@@ -676,15 +921,25 @@ extension ACDCommand.Reviews {
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: ReviewsFilterOptions
         @OptionGroup var compare: CompareOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [ReviewsGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .compare, global: global, credentials: credentials, time: time, filters: filters, compare: compare, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .compare,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: compare,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 }
@@ -695,12 +950,22 @@ extension ACDCommand.Finance {
         static let defaultPreset: PTDateRangePreset = .lastMonth
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: FinanceTimeSelectionOptions
+        @OptionGroup var filters: FinanceFilterOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .records, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: [], fetch: fetch)
+            try await executeDataset(
+                operation: .records,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: [],
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
@@ -709,14 +974,24 @@ extension ACDCommand.Finance {
         static let defaultPreset: PTDateRangePreset = .lastMonth
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: FinanceTimeSelectionOptions
+        @OptionGroup var filters: FinanceFilterOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [FinanceGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .aggregate, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .aggregate,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
@@ -725,64 +1000,116 @@ extension ACDCommand.Finance {
         static let defaultPreset: PTDateRangePreset = .lastMonth
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: FinanceTimeSelectionOptions
+        @OptionGroup var filters: FinanceFilterOptions
         @OptionGroup var compare: CompareOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [FinanceGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .compare, global: global, credentials: credentials, time: time, filters: filters, compare: compare, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .compare,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: compare,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 }
 
 extension ACDCommand.Analytics {
     struct Records: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Show raw analytics rows for the selected time window.",
+            discussion: analyticsSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .analytics
         static let defaultPreset: PTDateRangePreset = .last7d
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: AnalyticsFilterOptions
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .records, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: [], fetch: fetch)
+            try await executeDataset(
+                operation: .records,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: [],
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
     struct Aggregate: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Aggregate analytics rows for the selected time window.",
+            discussion: analyticsSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .analytics
         static let defaultPreset: PTDateRangePreset = .lastWeek
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: AnalyticsFilterOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [AnalyticsGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .aggregate, global: global, credentials: credentials, time: time, filters: filters, compare: nil, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .aggregate,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: nil,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 
     struct Compare: AsyncParsableCommand, DatasetCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Compare analytics aggregates across two time windows.",
+            discussion: analyticsSourceReportDiscussion
+        )
         static let dataset: QueryDataset = .analytics
         static let defaultPreset: PTDateRangePreset = .lastWeek
         @OptionGroup var global: GlobalOptions
         @OptionGroup var credentials: CredentialsOptions
-        @OptionGroup var time: TimeSelectionOptions
-        @OptionGroup var filters: FilterOptions
+        @OptionGroup var time: RangeTimeSelectionOptions
+        @OptionGroup var filters: AnalyticsFilterOptions
         @OptionGroup var compare: CompareOptions
         @Option(name: .customLong("group-by"), help: "Group by field. Repeat for multiple values.")
-        var groupBy: [QueryGroupBy] = []
+        var groupBy: [AnalyticsGroupBy] = []
         @OptionGroup var fetch: FetchControlOptions
 
         mutating func run() async throws {
-            try await executeDataset(operation: .compare, global: global, credentials: credentials, time: time, filters: filters, compare: compare, groupBy: groupBy, fetch: fetch)
+            try await executeDataset(
+                operation: .compare,
+                global: global,
+                credentials: credentials,
+                time: try time.selection(defaultPreset: Self.defaultPreset),
+                filters: filters.queryFilters(),
+                compare: compare,
+                groupBy: groupBy.map(\.queryValue),
+                limit: filters.limit,
+                fetch: fetch
+            )
         }
     }
 }

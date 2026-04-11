@@ -35,6 +35,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
     private let client: ASCClient?
     private let downloader: ReportDownloader?
     private let fxService: FXRateService
+    private let vendorNumber: String?
     private let reportingCurrency: String
 
     public init(
@@ -44,6 +45,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
         client: ASCClient? = nil,
         downloader: ReportDownloader? = nil,
         fxService: FXRateService? = nil,
+        vendorNumber: String? = nil,
         reportingCurrency: String = "USD"
     ) {
         self.cacheStore = cacheStore
@@ -52,6 +54,8 @@ public final class AnalyticsEngine: @unchecked Sendable {
         self.client = client
         self.downloader = downloader
         self.fxService = fxService ?? FXRateService(cacheURL: cacheStore.fxRatesURL)
+        let normalizedVendorNumber = vendorNumber?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.vendorNumber = normalizedVendorNumber?.isEmpty == false ? normalizedVendorNumber : nil
         let normalizedReportingCurrency = reportingCurrency.normalizedCurrencyCode
         self.reportingCurrency = normalizedReportingCurrency.isUnknownCurrencyCode ? "USD" : normalizedReportingCurrency
     }
@@ -73,8 +77,11 @@ public final class AnalyticsEngine: @unchecked Sendable {
                     "Win-back eligibility in v1"
                 ],
                 timeSupport: ["date", "from/to", "range", "year"],
-                filterSupport: ["app", "version", "territory", "device", "sku", "subscription", "sourceReport"],
-                notes: ["Defaults to summary-sales when sourceReport is omitted."]
+                filterSupport: ["app", "version", "territory", "currency", "device", "sku", "subscription", "sourceReport"],
+                notes: [
+                    "Defaults to summary-sales when source-report is omitted.",
+                    "summary-sales, pre-order, and subscription-offer-redemption support app-version filters. subscription, subscription-event, and subscriber support subscription filters instead."
+                ]
             ),
             CapabilityDescriptor(
                 name: "reviews",
@@ -90,7 +97,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
                     "App version from the review API"
                 ],
                 timeSupport: ["date", "from/to", "range", "year"],
-                filterSupport: ["app", "territory"],
+                filterSupport: ["app", "territory", "rating", "responseState", "sourceReport"],
                 notes: ["Version filtering is unavailable because Apple does not expose app version on review records."]
             ),
             CapabilityDescriptor(
@@ -106,8 +113,8 @@ public final class AnalyticsEngine: @unchecked Sendable {
                     "Real-time finance data"
                 ],
                 timeSupport: ["fiscalMonth", "fiscalYear", "last-month", "previous-month"],
-                filterSupport: ["app", "territory", "sku", "sourceReport"],
-                notes: ["Finance uses Apple fiscal month semantics."]
+                filterSupport: ["territory", "currency", "sku", "sourceReport"],
+                notes: ["Finance uses Apple fiscal month semantics. Defaults to financial when source-report is omitted."]
             ),
             CapabilityDescriptor(
                 name: "analytics",
@@ -127,7 +134,8 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 filterSupport: ["app", "territory", "device", "version", "platform", "sourceReport"],
                 notes: [
                     "Only Apple Analytics Reports are used.",
-                    "The first query may create an Apple report request and return a waiting warning."
+                    "The first query may create an Apple report request and return a waiting warning.",
+                    "engagement does not support app-version filter or version group-by. acquisition, usage, and performance do."
                 ]
             )
         ]
@@ -163,18 +171,39 @@ public final class AnalyticsEngine: @unchecked Sendable {
         let selection = try resolveSelection(dataset: .sales, time: spec.time, defaultPreset: .last7d)
         let requestedReports = try normalizedSalesFamilies(filters: spec.filters)
         var syncWarnings: [QueryWarning] = []
+        let freshnessCutoff = offline || skipSync || syncService == nil ? nil : Date().addingTimeInterval(-1)
         if offline == false, skipSync == false, let syncService {
             let summary = try await syncService.syncSalesReports(window: selection.window, reportFamilies: requestedReports, force: refresh)
             syncWarnings = summary.warnings
+            if spec.operation == .compare {
+                let previousSelection = try resolveComparisonSelection(
+                    dataset: .sales,
+                    current: selection,
+                    mode: spec.compare ?? .previousPeriod,
+                    custom: spec.compareTime
+                )
+                let previousSummary = try await syncService.syncSalesReports(
+                    window: previousSelection.window,
+                    reportFamilies: requestedReports,
+                    force: refresh
+                )
+                syncWarnings.append(contentsOf: previousSummary.warnings)
+            }
         }
-        let records = try loadSalesRecords(window: selection.window, filters: spec.filters, requestedReports: requestedReports)
+        let records = try loadSalesRecords(
+            window: selection.window,
+            filters: spec.filters,
+            requestedReports: requestedReports,
+            freshnessCutoff: freshnessCutoff
+        )
         return try await buildResult(
             dataset: .sales,
             spec: spec,
             selection: selection,
             source: requestedReports.map(\.rawValue),
             records: records,
-            baseWarnings: syncWarnings,
+            baseWarnings: deduplicatedWarnings(syncWarnings),
+            comparisonFreshnessCutoff: freshnessCutoff,
             allowFXNetwork: offline == false
         )
     }
@@ -216,6 +245,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
         let selection = try resolveSelection(dataset: .finance, time: spec.time, defaultPreset: .lastMonth)
         let requestedReports = try normalizedFinanceSourceReports(filters: spec.filters)
         var syncWarnings: [QueryWarning] = []
+        let freshnessCutoff = offline || skipSync || syncService == nil ? nil : Date().addingTimeInterval(-1)
         if offline == false, skipSync == false, let syncService {
             let summary = try await syncService.syncFinance(
                 fiscalMonths: selection.fiscalMonths,
@@ -224,16 +254,36 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 force: refresh
             )
             syncWarnings = summary.warnings
+            if spec.operation == .compare {
+                let previousSelection = try resolveComparisonSelection(
+                    dataset: .finance,
+                    current: selection,
+                    mode: spec.compare ?? .previousPeriod,
+                    custom: spec.compareTime
+                )
+                let previousSummary = try await syncService.syncFinance(
+                    fiscalMonths: previousSelection.fiscalMonths,
+                    regionCodes: ["ZZ", "Z1"],
+                    reportTypes: financeReportTypes(for: requestedReports),
+                    force: refresh
+                )
+                syncWarnings.append(contentsOf: previousSummary.warnings)
+            }
         }
-        let records = try loadFinanceRecords(fiscalMonths: selection.fiscalMonths, filters: spec.filters)
-        let source = requestedReports.isEmpty ? ["financial", "finance-detail"] : requestedReports
+        let records = try loadFinanceRecords(
+            fiscalMonths: selection.fiscalMonths,
+            filters: spec.filters,
+            freshnessCutoff: freshnessCutoff
+        )
+        let source = requestedReports.isEmpty ? defaultFinanceSourceReports : requestedReports
         return try await buildResult(
             dataset: .finance,
             spec: spec,
             selection: selection,
             source: source,
             records: records,
-            baseWarnings: syncWarnings,
+            baseWarnings: deduplicatedWarnings(syncWarnings),
+            comparisonFreshnessCutoff: freshnessCutoff,
             allowFXNetwork: offline == false
         )
     }
@@ -246,26 +296,58 @@ public final class AnalyticsEngine: @unchecked Sendable {
     ) async throws -> QueryResult {
         let selection = try resolveSelection(dataset: .analytics, time: spec.time, defaultPreset: .last7d)
         let reportDescriptors = try normalizedAnalyticsReports(filters: spec.filters)
-        let warnings = skipSync ? [] : try await ensureAnalyticsData(
-            selection: selection,
-            filters: spec.filters,
+        let resolvedApps = try await resolvedAnalyticsApps(filters: spec.filters, offline: offline, skipSync: skipSync)
+        let executionFilters = expandedAnalyticsFilters(spec.filters, resolvedApps: resolvedApps)
+        var warnings: [QueryWarning] = []
+        let freshnessCutoff = offline || skipSync || client == nil || downloader == nil ? nil : Date().addingTimeInterval(-1)
+        if skipSync == false {
+            warnings.append(contentsOf: try await ensureAnalyticsData(
+                selection: selection,
+                filters: executionFilters,
+                descriptors: reportDescriptors,
+                apps: resolvedApps,
+                offline: offline,
+                refresh: refresh
+            ))
+            if spec.operation == .compare {
+                let previousSelection = try resolveComparisonSelection(
+                    dataset: .analytics,
+                    current: selection,
+                    mode: spec.compare ?? .previousPeriod,
+                    custom: spec.compareTime
+                )
+                warnings.append(contentsOf: try await ensureAnalyticsData(
+                    selection: previousSelection,
+                    filters: executionFilters,
+                    descriptors: reportDescriptors,
+                    apps: resolvedApps,
+                    offline: offline,
+                    refresh: refresh
+                ))
+            }
+        }
+        let records = try loadAnalyticsRecords(
+            window: selection.window,
+            filters: executionFilters,
             descriptors: reportDescriptors,
-            offline: offline,
-            refresh: refresh
+            resolvedApps: resolvedApps,
+            freshnessCutoff: freshnessCutoff
         )
-        let records = try loadAnalyticsRecords(window: selection.window, filters: spec.filters, descriptors: reportDescriptors)
         return try await buildResult(
             dataset: .analytics,
             spec: spec,
             selection: selection,
             source: reportDescriptors.map(\.id),
             records: records,
-            baseWarnings: warnings + [
+            baseWarnings: deduplicatedWarnings(warnings + [
                 QueryWarning(
                     code: "analytics-privacy",
                     message: "Analytics reports can omit rows or metric values because Apple applies privacy thresholds and late corrections."
                 )
-            ],
+            ]),
+            comparisonFreshnessCutoff: freshnessCutoff,
+            executionFilters: executionFilters,
+            resolvedAnalyticsApps: resolvedApps,
             allowFXNetwork: false
         )
     }
@@ -277,6 +359,9 @@ public final class AnalyticsEngine: @unchecked Sendable {
         source: [String],
         records: [QueryRecord],
         baseWarnings: [QueryWarning] = [],
+        comparisonFreshnessCutoff: Date? = nil,
+        executionFilters: QueryFilterSet? = nil,
+        resolvedAnalyticsApps: [ASCAppSummary]? = nil,
         allowFXNetwork: Bool
     ) async throws -> QueryResult {
         let sortedRecords = records.sorted { lhs, rhs in
@@ -302,24 +387,27 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 dataset: dataset,
                 rows: aggregate(records: current.records, groupBy: spec.groupBy, dataset: dataset)
             )
+            let limited = spec.limit.map { Array(aggregateRows.prefix(max(0, $0))) } ?? aggregateRows
             return QueryResult(
                 dataset: dataset,
                 operation: .aggregate,
                 time: selection.envelope,
                 filters: spec.filters,
                 source: source,
-                data: QueryResultData(aggregates: aggregateRows),
+                data: QueryResultData(aggregates: limited),
                 warnings: baseWarnings + current.warnings,
-                tableModel: makeAggregateTable(rows: aggregateRows)
+                tableModel: makeAggregateTable(dataset: dataset, rows: limited)
             )
         case .compare:
             let mode = spec.compare ?? .previousPeriod
             let previousSelection = try resolveComparisonSelection(dataset: dataset, current: selection, mode: mode, custom: spec.compareTime)
             let previousRecords = try loadRecordsForComparison(
                 dataset: dataset,
-                filters: spec.filters,
+                filters: executionFilters ?? spec.filters,
                 selection: previousSelection,
-                source: source
+                source: source,
+                resolvedAnalyticsApps: resolvedAnalyticsApps,
+                freshnessCutoff: comparisonFreshnessCutoff
             )
             let current = try await normalizeMonetaryRecords(dataset: dataset, records: sortedRecords, allowNetwork: allowFXNetwork)
             let previous = try await normalizeMonetaryRecords(dataset: dataset, records: previousRecords, allowNetwork: allowFXNetwork)
@@ -332,16 +420,17 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 rows: aggregate(records: previous.records, groupBy: spec.groupBy, dataset: dataset)
             )
             let comparisons = compareAggregateRows(current: currentAggregates, previous: previousAggregates)
+            let limited = spec.limit.map { Array(comparisons.prefix(max(0, $0))) } ?? comparisons
             return QueryResult(
                 dataset: dataset,
                 operation: .compare,
                 time: selection.envelope,
                 filters: spec.filters,
                 source: source,
-                data: QueryResultData(comparisons: comparisons),
+                data: QueryResultData(comparisons: limited),
                 comparison: QueryComparisonEnvelope(mode: mode, current: selection.envelope, previous: previousSelection.envelope),
                 warnings: baseWarnings + current.warnings + previous.warnings,
-                tableModel: makeComparisonTable(rows: comparisons)
+                tableModel: makeComparisonTable(dataset: dataset, rows: limited)
             )
         case .brief:
             throw AnalyticsEngineError.invalidQuery("Brief summaries are handled by adc brief, adc overview, or adc query run --spec.")
@@ -350,7 +439,13 @@ public final class AnalyticsEngine: @unchecked Sendable {
 
     private func validateSpec(_ spec: DataQuerySpec) throws {
         try validateCompareCompatibility(spec)
+        try validateTimeSelection(dataset: spec.dataset, time: spec.time)
         try validateFilterSupport(dataset: spec.dataset, filters: spec.filters)
+        try validateGroupBySupport(spec)
+        try validateSalesSourceReportSelection(spec)
+        try validateSalesFilterSelection(spec)
+        try validateAnalyticsFilterSelection(spec)
+        try validateFinanceSourceReportSelection(spec)
     }
 
     private func validateCompareCompatibility(_ spec: DataQuerySpec) throws {
@@ -370,12 +465,24 @@ public final class AnalyticsEngine: @unchecked Sendable {
         }
     }
 
+    private func validateTimeSelection(dataset: QueryDataset, time: QueryTimeSelection) throws {
+        let requested = requestedTimeSelectors(from: time)
+        guard requested.isEmpty == false else { return }
+        let supported = supportedTimeSelectorSet(for: dataset)
+        let unsupported = requested.subtracting(supported)
+        guard unsupported.isEmpty == false else { return }
+
+        throw AnalyticsEngineError.invalidQuery(
+            "Unsupported \(dataset.rawValue) time selector(s): \(unsupported.sorted().joined(separator: ", ")). Supported selectors: \(supported.sorted().joined(separator: ", "))."
+        )
+    }
+
     private func validateFilterSupport(dataset: QueryDataset, filters: QueryFilterSet) throws {
         let supported = supportedFilterSet(for: dataset)
         let unsupported = requestedFilters(from: filters).filter { supported.contains($0) == false }
         if unsupported.isEmpty == false {
-            let unsupportedList = unsupported.sorted().joined(separator: ", ")
-            let supportedList = supported.sorted().joined(separator: ", ")
+            let unsupportedList = displayFilterNames(unsupported).joined(separator: ", ")
+            let supportedList = displayFilterNames(supported).joined(separator: ", ")
             throw AnalyticsEngineError.unsupportedFilter(
                 "Unsupported \(dataset.rawValue) filter(s): \(unsupportedList). Supported filters: \(supportedList)."
             )
@@ -398,6 +505,70 @@ public final class AnalyticsEngine: @unchecked Sendable {
         }
     }
 
+    private func validateGroupBySupport(_ spec: DataQuerySpec) throws {
+        guard spec.groupBy.isEmpty == false else { return }
+
+        switch spec.operation {
+        case .aggregate, .compare:
+            break
+        case .records:
+            throw AnalyticsEngineError.invalidQuery("groupBy is only supported for aggregate and compare operations.")
+        case .brief:
+            throw AnalyticsEngineError.invalidQuery("groupBy is not supported for brief queries.")
+        }
+
+        let supported = try supportedGroupBySet(for: spec)
+        let unsupported = Array(Set(spec.groupBy.filter { supported.contains($0) == false }))
+            .sorted { $0.rawValue < $1.rawValue }
+        guard unsupported.isEmpty == false else { return }
+
+        let unsupportedList = unsupported.map(\.rawValue).joined(separator: ", ")
+        let supportedList = supported.map(\.rawValue).sorted().joined(separator: ", ")
+        throw AnalyticsEngineError.unsupportedGroupBy(
+            "Unsupported \(spec.dataset.rawValue) group-by value(s): \(unsupportedList). Supported values: \(supportedList)."
+        )
+    }
+
+    private func validateSalesFilterSelection(_ spec: DataQuerySpec) throws {
+        guard spec.dataset == .sales else { return }
+        let requested = requestedFilters(from: spec.filters)
+        guard requested.isEmpty == false else { return }
+        let reports = try normalizedSalesFamilies(filters: spec.filters)
+        let supported = reports.reduce(into: Set<String>()) { partial, report in
+            let filters = supportedSalesFilterSet(for: report)
+            if partial.isEmpty {
+                partial = filters
+            } else {
+                partial.formIntersection(filters)
+            }
+        }
+        let unsupported = requested.filter { supported.contains($0) == false }.sorted()
+        guard unsupported.isEmpty == false else { return }
+        throw AnalyticsEngineError.unsupportedFilter(
+            "Unsupported sales filter(s) for the requested source-report: \(displayFilterNames(unsupported).joined(separator: ", ")). Supported filters: \(displayFilterNames(supported).joined(separator: ", "))."
+        )
+    }
+
+    private func validateAnalyticsFilterSelection(_ spec: DataQuerySpec) throws {
+        guard spec.dataset == .analytics else { return }
+        let requested = requestedFilters(from: spec.filters)
+        guard requested.isEmpty == false else { return }
+        let descriptors = try normalizedAnalyticsReports(filters: spec.filters)
+        let supported = descriptors.reduce(into: Set<String>()) { partial, descriptor in
+            let filters = supportedAnalyticsFilterSet(for: descriptor)
+            if partial.isEmpty {
+                partial = filters
+            } else {
+                partial.formIntersection(filters)
+            }
+        }
+        let unsupported = requested.filter { supported.contains($0) == false }.sorted()
+        guard unsupported.isEmpty == false else { return }
+        throw AnalyticsEngineError.unsupportedFilter(
+            "Unsupported analytics filter(s) for the requested source-report: \(displayFilterNames(unsupported).joined(separator: ", ")). Supported filters: \(displayFilterNames(supported).joined(separator: ", "))."
+        )
+    }
+
     private func supportedFilterSet(for dataset: QueryDataset) -> Set<String> {
         switch dataset {
         case .sales:
@@ -405,11 +576,78 @@ public final class AnalyticsEngine: @unchecked Sendable {
         case .reviews:
             return ["app", "territory", "rating", "response-state", "source-report"]
         case .finance:
-            return ["app", "territory", "currency", "sku", "source-report"]
+            return ["territory", "currency", "sku", "source-report"]
         case .analytics:
             return ["app", "version", "territory", "device", "platform", "source-report"]
         case .brief:
             return []
+        }
+    }
+
+    private func supportedGroupBySet(for spec: DataQuerySpec) throws -> Set<QueryGroupBy> {
+        switch spec.dataset {
+        case .sales:
+            let requestedReports = try normalizedSalesFamilies(filters: spec.filters)
+            return requestedReports.reduce(into: Set<QueryGroupBy>()) { partial, report in
+                let fields = supportedSalesGroupBySet(for: report)
+                if partial.isEmpty {
+                    partial = fields
+                } else {
+                    partial.formIntersection(fields)
+                }
+            }
+        case .reviews:
+            return [.day, .week, .month, .fiscalMonth, .app, .territory, .rating, .responseState, .reportType, .sourceReport]
+        case .finance:
+            return [.day, .week, .month, .fiscalMonth, .territory, .currency, .sku, .reportType, .sourceReport]
+        case .analytics:
+            let descriptors = try normalizedAnalyticsReports(filters: spec.filters)
+            return descriptors.reduce(into: Set<QueryGroupBy>()) { partial, descriptor in
+                let fields = supportedAnalyticsGroupBySet(for: descriptor)
+                if partial.isEmpty {
+                    partial = fields
+                } else {
+                    partial.formIntersection(fields)
+                }
+            }
+        case .brief:
+            return []
+        }
+    }
+
+    private func supportedSalesGroupBySet(for report: SalesReportFamily) -> Set<QueryGroupBy> {
+        switch report {
+        case .summarySales, .preOrder, .subscriptionOfferRedemption:
+            return [.day, .week, .month, .fiscalMonth, .app, .version, .territory, .currency, .device, .sku, .reportType, .sourceReport]
+        case .subscription, .subscriptionEvent, .subscriber:
+            return [.day, .week, .month, .fiscalMonth, .app, .territory, .currency, .device, .sku, .subscription, .reportType, .sourceReport]
+        }
+    }
+
+    private func supportedSalesFilterSet(for report: SalesReportFamily) -> Set<String> {
+        switch report {
+        case .summarySales, .preOrder, .subscriptionOfferRedemption:
+            return ["app", "version", "territory", "currency", "device", "sku", "source-report"]
+        case .subscription, .subscriptionEvent, .subscriber:
+            return ["app", "territory", "currency", "device", "sku", "subscription", "source-report"]
+        }
+    }
+
+    private func supportedAnalyticsFilterSet(for descriptor: AnalyticsReportDescriptor) -> Set<String> {
+        switch descriptor.id {
+        case "engagement":
+            return ["app", "territory", "device", "platform", "source-report"]
+        default:
+            return ["app", "version", "territory", "device", "platform", "source-report"]
+        }
+    }
+
+    private func supportedAnalyticsGroupBySet(for descriptor: AnalyticsReportDescriptor) -> Set<QueryGroupBy> {
+        switch descriptor.id {
+        case "engagement":
+            return [.day, .week, .month, .fiscalMonth, .app, .territory, .device, .platform, .reportType, .sourceReport]
+        default:
+            return [.day, .week, .month, .fiscalMonth, .app, .version, .territory, .device, .platform, .reportType, .sourceReport]
         }
     }
 
@@ -429,29 +667,75 @@ public final class AnalyticsEngine: @unchecked Sendable {
         return names
     }
 
+    private func displayFilterNames<S: Sequence>(_ names: S) -> [String] where S.Element == String {
+        names.map(displayFilterName).sorted()
+    }
+
+    private func displayFilterName(_ name: String) -> String {
+        switch name {
+        case "version":
+            return "app-version"
+        default:
+            return name
+        }
+    }
+
+    private func requestedTimeSelectors(from time: QueryTimeSelection) -> Set<String> {
+        var names: Set<String> = []
+        if nonEmptyString(time.datePT) != nil { names.insert("datePT") }
+        if nonEmptyString(time.startDatePT) != nil || nonEmptyString(time.endDatePT) != nil {
+            names.formUnion(["startDatePT", "endDatePT"])
+        }
+        if nonEmptyString(time.rangePreset) != nil { names.insert("rangePreset") }
+        if time.year != nil { names.insert("year") }
+        if nonEmptyString(time.fiscalMonth) != nil { names.insert("fiscalMonth") }
+        if time.fiscalYear != nil { names.insert("fiscalYear") }
+        return names
+    }
+
+    private func supportedTimeSelectorSet(for dataset: QueryDataset) -> Set<String> {
+        switch dataset {
+        case .sales, .reviews, .analytics:
+            return ["datePT", "startDatePT", "endDatePT", "rangePreset", "year"]
+        case .finance:
+            return ["rangePreset", "fiscalMonth", "fiscalYear", "year"]
+        case .brief:
+            return ["rangePreset"]
+        }
+    }
+
     private func loadRecordsForComparison(
         dataset: QueryDataset,
         filters: QueryFilterSet,
         selection: ResolvedSelection,
-        source: [String]
+        source: [String],
+        resolvedAnalyticsApps: [ASCAppSummary]? = nil,
+        freshnessCutoff: Date?
     ) throws -> [QueryRecord] {
         switch dataset {
         case .sales:
             return try loadSalesRecords(
                 window: selection.window,
                 filters: filters,
-                requestedReports: try normalizedSalesFamilies(filters: filters)
+                requestedReports: try normalizedSalesFamilies(filters: filters),
+                freshnessCutoff: freshnessCutoff
             )
         case .reviews:
             try validateReviewSourceReports(filters.sourceReport)
-            return try loadReviewRecords(window: selection.window, filters: filters)
+            return try loadReviewRecords(window: selection.window, filters: filters, freshnessCutoff: freshnessCutoff)
         case .finance:
-            return try loadFinanceRecords(fiscalMonths: selection.fiscalMonths, filters: filters)
+            return try loadFinanceRecords(
+                fiscalMonths: selection.fiscalMonths,
+                filters: filters,
+                freshnessCutoff: freshnessCutoff
+            )
         case .analytics:
             return try loadAnalyticsRecords(
                 window: selection.window,
                 filters: filters,
-                descriptors: try normalizedAnalyticsReports(filters: filters)
+                descriptors: try normalizedAnalyticsReports(filters: filters),
+                resolvedApps: resolvedAnalyticsApps,
+                freshnessCutoff: freshnessCutoff
             )
         case .brief:
             throw AnalyticsEngineError.invalidQuery("Brief summaries do not load comparison records through AnalyticsEngine.")
@@ -596,15 +880,43 @@ public final class AnalyticsEngine: @unchecked Sendable {
         return Array(Set(mapped)).sorted()
     }
 
+    private var defaultFinanceSourceReports: [String] { ["financial"] }
+
     func financeReportTypes(for requestedReports: [String]) -> [FinanceReportType] {
         var reportTypes: [FinanceReportType] = []
         if requestedReports.isEmpty || requestedReports.contains("financial") {
             reportTypes.append(.financial)
         }
-        if requestedReports.isEmpty || requestedReports.contains("finance-detail") {
+        if requestedReports.contains("finance-detail") {
             reportTypes.append(.financeDetail)
         }
         return reportTypes
+    }
+
+    private func validateFinanceSourceReportSelection(_ spec: DataQuerySpec) throws {
+        guard spec.dataset == .finance else { return }
+        let requestedReports = try normalizedFinanceSourceReports(filters: spec.filters)
+        guard requestedReports.count > 1 else { return }
+        guard spec.operation != .records else { return }
+        if spec.groupBy.contains(.sourceReport) || spec.groupBy.contains(.reportType) {
+            return
+        }
+        throw AnalyticsEngineError.invalidQuery(
+            "Finance aggregate and compare queries cannot combine financial and finance-detail unless grouped by sourceReport or reportType."
+        )
+    }
+
+    private func validateSalesSourceReportSelection(_ spec: DataQuerySpec) throws {
+        guard spec.dataset == .sales else { return }
+        let requestedReports = try normalizedSalesFamilies(filters: spec.filters)
+        guard requestedReports.count > 1 else { return }
+        guard spec.operation != .records else { return }
+        if spec.groupBy.contains(.sourceReport) || spec.groupBy.contains(.reportType) {
+            return
+        }
+        throw AnalyticsEngineError.invalidQuery(
+            "Sales aggregate and compare queries cannot combine multiple source-report families unless grouped by sourceReport or reportType."
+        )
     }
 
     private func validateSourceReportInputs(
@@ -624,27 +936,33 @@ public final class AnalyticsEngine: @unchecked Sendable {
         selection: ResolvedSelection,
         filters: QueryFilterSet,
         descriptors: [AnalyticsReportDescriptor],
+        apps: [ASCAppSummary]? = nil,
         offline: Bool,
         refresh: Bool
     ) async throws -> [QueryWarning] {
         guard offline == false, let client, let downloader else { return [] }
-        let apps = try await resolveAnalyticsApps(filters: filters, client: client)
+        let apps = if let apps {
+            apps
+        } else {
+            try await resolveAnalyticsApps(filters: filters, client: client)
+        }
         guard apps.isEmpty == false else {
             return [QueryWarning(code: "analytics-no-apps", message: "No App Store Connect apps matched the analytics app filter.")]
         }
         let granularity = preferredAnalyticsGranularity(for: selection)
         let processingDateKeys = analyticsProcessingDates(for: selection.window, granularity: granularity)
-        let policy: ReportCachePolicy = refresh ? .reloadIgnoringCache : .useCached
+        let policy: ReportCachePolicy = .reloadIgnoringCache
         var warnings: [QueryWarning] = []
 
         for app in apps {
-            let accessType = preferredAnalyticsAccessType(for: selection)
+            let preferredAccessTypes = preferredAnalyticsAccessTypes(for: selection)
             var requests = try await client.listAnalyticsReportRequests(appID: app.id)
-            var request = requests.first {
-                $0.accessType == accessType && $0.stoppedDueToInactivity == false
-            }
+            var request = selectAnalyticsRequest(from: requests, preferredAccessTypes: preferredAccessTypes)
             if request == nil {
-                request = try await client.createAnalyticsReportRequest(appID: app.id, accessType: accessType)
+                request = try await client.createAnalyticsReportRequest(
+                    appID: app.id,
+                    accessType: preferredAccessTypes.first ?? .ongoing
+                )
                 warnings.append(
                     QueryWarning(
                         code: "analytics-request-created",
@@ -652,11 +970,17 @@ public final class AnalyticsEngine: @unchecked Sendable {
                     )
                 )
                 requests = try await client.listAnalyticsReportRequests(appID: app.id)
-                request = requests.first {
-                    $0.accessType == accessType && $0.stoppedDueToInactivity == false
-                }
+                request = selectAnalyticsRequest(from: requests, preferredAccessTypes: preferredAccessTypes)
             }
-            guard let activeRequest = request else { continue }
+            guard let activeRequest = request else {
+                warnings.append(
+                    QueryWarning(
+                        code: "analytics-request-missing",
+                        message: "Apple has not activated a usable Analytics report request for \(app.name) yet."
+                    )
+                )
+                continue
+            }
 
             for descriptor in descriptors {
                 let reports = try await client.listAnalyticsReports(
@@ -680,6 +1004,15 @@ public final class AnalyticsEngine: @unchecked Sendable {
                         granularity: granularity,
                         processingDate: processingDate
                     )
+                    if instances.isEmpty {
+                        warnings.append(
+                            QueryWarning(
+                                code: "analytics-instance-missing",
+                                message: "Apple has not generated the \(descriptor.requestName) \(granularity.rawValue.lowercased()) instance for \(processingDate) for \(app.name) yet."
+                            )
+                        )
+                        continue
+                    }
                     for instance in instances {
                         let segments = try await client.listAnalyticsReportSegments(instanceID: instance.id)
                         if segments.isEmpty {
@@ -696,6 +1029,9 @@ public final class AnalyticsEngine: @unchecked Sendable {
                                 segment: segment,
                                 reportName: report.name,
                                 reportDateKey: reportDateKey,
+                                cacheIdentity: "\(app.id)|\(instance.id)",
+                                appID: app.id,
+                                bundleID: app.bundleID,
                                 cachePolicy: policy
                             )
                             _ = try cacheStore.record(report: downloaded)
@@ -708,6 +1044,15 @@ public final class AnalyticsEngine: @unchecked Sendable {
         return warnings
     }
 
+    private func resolvedAnalyticsApps(
+        filters: QueryFilterSet,
+        offline: Bool,
+        skipSync: Bool
+    ) async throws -> [ASCAppSummary]? {
+        guard offline == false, skipSync == false, let client else { return nil }
+        return try await resolveAnalyticsApps(filters: filters, client: client)
+    }
+
     private func resolveAnalyticsApps(filters: QueryFilterSet, client: ASCClient) async throws -> [ASCAppSummary] {
         let apps = try await client.listApps(limit: nil)
         guard filters.app.isEmpty == false else { return apps }
@@ -718,11 +1063,54 @@ public final class AnalyticsEngine: @unchecked Sendable {
         }
     }
 
-    private func preferredAnalyticsAccessType(for selection: ResolvedSelection) -> ASCAnalyticsAccessType {
-        if selection.kind == .year || selection.kind == .range {
-            return .oneTimeSnapshot
+    private func expandedAnalyticsFilters(
+        _ filters: QueryFilterSet,
+        resolvedApps: [ASCAppSummary]?
+    ) -> QueryFilterSet {
+        guard filters.app.isEmpty == false, let resolvedApps, resolvedApps.isEmpty == false else {
+            return filters
         }
-        return .ongoing
+        let expandedApps = Array(
+            Set(
+                filters.app
+                    + resolvedApps.map(\.id)
+                    + resolvedApps.compactMap(\.bundleID)
+            )
+        ).sorted()
+        return QueryFilterSet(
+            app: expandedApps,
+            version: filters.version,
+            territory: filters.territory,
+            currency: filters.currency,
+            device: filters.device,
+            sku: filters.sku,
+            subscription: filters.subscription,
+            platform: filters.platform,
+            sourceReport: filters.sourceReport,
+            rating: filters.rating,
+            responseState: filters.responseState
+        )
+    }
+
+    private func preferredAnalyticsAccessTypes(for selection: ResolvedSelection) -> [ASCAnalyticsAccessType] {
+        if selection.kind == .year {
+            return [.oneTimeSnapshot, .ongoing]
+        }
+        return [.ongoing, .oneTimeSnapshot]
+    }
+
+    private func selectAnalyticsRequest(
+        from requests: [ASCAnalyticsReportRequest],
+        preferredAccessTypes: [ASCAnalyticsAccessType]
+    ) -> ASCAnalyticsReportRequest? {
+        for accessType in preferredAccessTypes {
+            if let request = requests.first(where: {
+                $0.accessType == accessType && $0.stoppedDueToInactivity == false
+            }) {
+                return request
+            }
+        }
+        return nil
     }
 
     private func preferredAnalyticsGranularity(for selection: ResolvedSelection) -> ASCAnalyticsGranularity {
@@ -759,38 +1147,46 @@ public final class AnalyticsEngine: @unchecked Sendable {
     private func loadSalesRecords(
         window: PTDateWindow,
         filters: QueryFilterSet,
-        requestedReports: [SalesReportFamily]
+        requestedReports: [SalesReportFamily],
+        freshnessCutoff: Date? = nil
     ) throws -> [QueryRecord] {
         var records: [QueryRecord] = []
         if requestedReports.contains(.summarySales) {
-            let rows = try loadSalesSummaryRows(window: window)
+            let rows = try loadSalesSummaryRows(window: window, freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeSummarySalesRecord(row: $0, filters: filters, window: window) })
         }
         if requestedReports.contains(.subscription) {
-            let rows = try loadSubscriptionRows(reportType: "SUBSCRIPTION")
+            let rows = try loadSubscriptionRows(window: window, reportType: "SUBSCRIPTION", freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeSubscriptionRecord(row: $0, filters: filters, window: window) })
         }
         if requestedReports.contains(.subscriptionEvent) {
-            let rows = try loadSubscriptionEventRows()
+            let rows = try loadSubscriptionEventRows(window: window, freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeSubscriptionEventRecord(row: $0, filters: filters, window: window) })
         }
         if requestedReports.contains(.subscriber) {
-            let rows = try loadSubscriberRows()
+            let rows = try loadSubscriberRows(window: window, freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeSubscriberRecord(row: $0, filters: filters, window: window) })
         }
         if requestedReports.contains(.preOrder) {
-            let rows = try loadSalesGenericRows(reportType: "PRE_ORDER")
+            let rows = try loadSalesGenericRows(window: window, reportType: "PRE_ORDER", freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeGenericSalesRecord(row: $0, reportType: .preOrder, filters: filters, window: window) })
         }
         if requestedReports.contains(.subscriptionOfferRedemption) {
-            let rows = try loadSalesGenericRows(reportType: "SUBSCRIPTION_OFFER_CODE_REDEMPTION")
+            let rows = try loadSalesGenericRows(window: window, reportType: "SUBSCRIPTION_OFFER_CODE_REDEMPTION", freshnessCutoff: freshnessCutoff)
             records.append(contentsOf: rows.compactMap { makeGenericSalesRecord(row: $0, reportType: .subscriptionOfferRedemption, filters: filters, window: window) })
         }
         return records
     }
 
-    private func loadReviewRecords(window: PTDateWindow, filters: QueryFilterSet) throws -> [QueryRecord] {
-        guard let payload = try cacheStore.loadReviews() else { return [] }
+    private func loadReviewRecords(
+        window: PTDateWindow,
+        filters: QueryFilterSet,
+        freshnessCutoff: Date? = nil
+    ) throws -> [QueryRecord] {
+        guard let payload = try cacheStore.loadReviews(vendorNumber: vendorNumber) else { return [] }
+        if let freshnessCutoff, payload.fetchedAt < freshnessCutoff {
+            return []
+        }
         let allowedRatings = Set(filters.rating)
         let expectedResponseState = normalizedReviewResponseState(filters.responseState)
         return payload.reviews.compactMap { review in
@@ -808,6 +1204,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 dimensions: [
                     "date": review.createdDate.ptDateString,
                     "app": review.appName,
+                    "appAppleIdentifier": review.appID,
                     "territory": review.territory ?? "",
                     "rating": "\(review.rating)",
                     "responseState": responseState,
@@ -825,21 +1222,27 @@ public final class AnalyticsEngine: @unchecked Sendable {
         }
     }
 
-    private func loadFinanceRecords(fiscalMonths: [String], filters: QueryFilterSet) throws -> [QueryRecord] {
-        let manifest = try cacheStore.loadManifest()
+    private func loadFinanceRecords(
+        fiscalMonths: [String],
+        filters: QueryFilterSet,
+        freshnessCutoff: Date? = nil
+    ) throws -> [QueryRecord] {
         let requested = normalizedStrings(filters.sourceReport)
-        let entries = manifest.filter { record in
-            guard record.source == .finance else { return false }
+        let effectiveRequested = requested.isEmpty ? normalizedStrings(defaultFinanceSourceReports) : requested
+        let manifest = try scopedManifestEntries(source: .finance) { record in
+            if let freshnessCutoff, record.fetchedAt < freshnessCutoff {
+                return false
+            }
             let month = String(record.reportDateKey.prefix(7))
             guard fiscalMonths.contains(month) else { return false }
-            if requested.isEmpty { return true }
             let normalizedType = normalizeReportName(record.reportType)
-            return requested.contains(normalizedType)
+            return effectiveRequested.contains(normalizedType)
         }
+        let entries = deduplicatedCachedEntries(manifest)
         return try entries.flatMap { entry in
             let fiscalMonth = String(entry.reportDateKey.prefix(7))
             let rows = try parser.parseFinance(
-                tsv: loadFile(entry.filePath),
+                tsv: try loadFile(entry.filePath),
                 fiscalMonth: fiscalMonth,
                 regionCode: entry.reportSubType,
                 vendorNumber: entry.vendorNumber,
@@ -849,7 +1252,6 @@ public final class AnalyticsEngine: @unchecked Sendable {
                 guard filters.territory.isEmpty || matchesAny(row.countryOfSale, in: filters.territory) else { return nil }
                 guard filters.currency.isEmpty || matchesAny(row.currency, in: filters.currency) else { return nil }
                 guard filters.sku.isEmpty || matchesAny(row.productRef, in: filters.sku) else { return nil }
-                guard filters.app.isEmpty || matchesAny(row.productRef, in: filters.app) else { return nil }
                 return QueryRecord(
                     id: row.lineHash,
                     dimensions: [
@@ -874,23 +1276,59 @@ public final class AnalyticsEngine: @unchecked Sendable {
     private func loadAnalyticsRecords(
         window: PTDateWindow,
         filters: QueryFilterSet,
-        descriptors: [AnalyticsReportDescriptor]
+        descriptors: [AnalyticsReportDescriptor],
+        resolvedApps: [ASCAppSummary]? = nil,
+        freshnessCutoff: Date? = nil
     ) throws -> [QueryRecord] {
-        let manifest = try cacheStore.loadManifest()
-        let allowedReportNames = Set(descriptors.map(\.requestName))
-        let entries = manifest.filter { record in
-            record.source == .analytics && allowedReportNames.contains(record.reportType)
+        let allowedSourceReports = Set(descriptors.map(\.id))
+        let entries = try scopedManifestEntries(source: .analytics) { record in
+            if let freshnessCutoff, record.fetchedAt < freshnessCutoff {
+                return false
+            }
+            guard reportDateKey(record.reportDateKey, isWithin: window) else {
+                return false
+            }
+            if let resolvedApps, resolvedApps.isEmpty == false,
+               matchesResolvedAnalyticsEntry(record, resolvedApps: resolvedApps) == false {
+                return false
+            }
+            return allowedSourceReports.contains(analyticsSourceReportID(for: record.reportType))
+        }.sorted {
+            if $0.fetchedAt == $1.fetchedAt {
+                return $0.filePath < $1.filePath
+            }
+            return $0.fetchedAt < $1.fetchedAt
         }
-        return try entries.flatMap { entry in
-            try parseAnalyticsRecords(tsv: loadFile(entry.filePath), reportName: entry.reportType)
-        }.filter { record in
-            guard let rawDate = record.dimensions["date"], let date = PTDate(rawDate).date else { return true }
+        var latestRecordsByKey: [String: QueryRecord] = [:]
+        for entry in entries {
+            let parsed = try parseAnalyticsRecords(tsv: try loadFile(entry.filePath), reportName: entry.reportType)
+            for record in parsed {
+                let dedupeKey = normalizedGroupKey(record.dimensions)
+                var dimensions = record.dimensions
+                if let bundleID = nonEmptyString(entry.bundleID) {
+                    dimensions["bundleID"] = bundleID
+                }
+                let enriched = QueryRecord(id: record.id, dimensions: dimensions, metrics: record.metrics)
+                latestRecordsByKey[dedupeKey] = enriched
+            }
+        }
+        return latestRecordsByKey.values.filter { record in
+            guard let rawDate = record.dimensions["date"], let date = PTDate(rawDate).date else { return false }
             let day = Calendar.pacific.startOfDay(for: date)
             guard window.startDate <= day, day <= window.endDate else { return false }
-            if filters.app.isEmpty == false,
-               matchesAny(record.dimensions["app"] ?? "", in: filters.app) == false,
-               matchesAny(record.dimensions["appAppleIdentifier"] ?? "", in: filters.app) == false {
-                return false
+            if filters.app.isEmpty == false {
+                if let resolvedApps, resolvedApps.isEmpty == false {
+                    let resolvedNames = resolvedApps.map(\.name)
+                    if matchesAny(record.dimensions["app"] ?? "", in: resolvedNames) == false,
+                       matchesAny(record.dimensions["appAppleIdentifier"] ?? "", in: filters.app) == false,
+                       matchesAny(record.dimensions["bundleID"] ?? "", in: filters.app) == false {
+                        return false
+                    }
+                } else if matchesAny(record.dimensions["app"] ?? "", in: filters.app) == false,
+                          matchesAny(record.dimensions["appAppleIdentifier"] ?? "", in: filters.app) == false,
+                          matchesAny(record.dimensions["bundleID"] ?? "", in: filters.app) == false {
+                    return false
+                }
             }
             if filters.territory.isEmpty == false, matchesAny(record.dimensions["territory"] ?? "", in: filters.territory) == false {
                 return false
@@ -908,47 +1346,152 @@ public final class AnalyticsEngine: @unchecked Sendable {
         }
     }
 
+    private func matchesResolvedAnalyticsEntry(
+        _ record: CachedReportRecord,
+        resolvedApps: [ASCAppSummary]
+    ) -> Bool {
+        let recordAppID = nonEmptyString(record.appID)
+        let recordBundleID = nonEmptyString(record.bundleID)
+        guard recordAppID != nil || recordBundleID != nil else {
+            return false
+        }
+        return resolvedApps.contains { app in
+            if let recordAppID, recordAppID == app.id {
+                return true
+            }
+            if let recordBundleID, recordBundleID == app.bundleID {
+                return true
+            }
+            return false
+        }
+    }
+
     private func parseAnalyticsRecords(tsv: String, reportName: String) throws -> [QueryRecord] {
         let lines = tsv.split(whereSeparator: \.isNewline).map(String.init).filter { $0.isEmpty == false }
         guard let headerLine = lines.first else { return [] }
         let delimiter: Character = headerLine.contains("\t") ? "\t" : ","
-        let headers = headerLine.split(separator: delimiter).map { normalizeHeader(String($0)) }
+        let headers = parseDelimitedLine(headerLine, delimiter: delimiter).map(normalizeHeader)
+        let sourceReportID = analyticsSourceReportID(for: reportName)
         return lines.dropFirst().compactMap { line in
-            let cells = line.split(separator: delimiter, omittingEmptySubsequences: false).map(String.init)
+            let cells = parseDelimitedLine(line, delimiter: delimiter)
             guard cells.count == headers.count else { return nil }
             var dimensions: [String: String] = [
                 "reportType": normalizeReportName(reportName),
-                "sourceReport": normalizeReportName(reportName)
+                "sourceReport": sourceReportID
             ]
             var metrics: [String: Double] = [:]
             for (header, rawValue) in zip(headers, cells) {
                 let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let value = Double(trimmed.replacingOccurrences(of: ",", with: "")) {
-                    metrics[header] = value
-                } else if header == "date", let parsed = parseDate(trimmed) {
+                if header == "date", let parsed = parseDate(trimmed) {
                     dimensions["date"] = parsed.ptDateString
+                } else if let dimensionKey = analyticsDimensionKey(for: header), trimmed.isEmpty == false {
+                    dimensions[dimensionKey] = trimmed
+                } else if let value = Double(trimmed.replacingOccurrences(of: ",", with: "")) {
+                    metrics[header] = value
                 } else if trimmed.isEmpty == false {
-                    switch header {
-                    case "app name":
-                        dimensions["app"] = trimmed
-                    case "app apple identifier":
-                        dimensions["appAppleIdentifier"] = trimmed
-                    case "app version":
-                        dimensions["version"] = trimmed
-                    case "territory":
-                        dimensions["territory"] = trimmed
-                    case "device":
-                        dimensions["device"] = trimmed
-                    case "platform":
-                        dimensions["platform"] = trimmed
-                    default:
-                        dimensions[header] = trimmed
-                    }
+                    dimensions[header] = trimmed
                 }
             }
             guard dimensions["date"] != nil || metrics.isEmpty == false else { return nil }
             return QueryRecord(id: line.sha256Hex, dimensions: dimensions, metrics: metrics)
         }
+    }
+
+    private func analyticsDimensionKey(for header: String) -> String? {
+        switch header {
+        case "app name":
+            return "app"
+        case "app apple identifier":
+            return "appAppleIdentifier"
+        case "app version", "version":
+            return "version"
+        case "territory":
+            return "territory"
+        case "device":
+            return "device"
+        case "platform", "platform version":
+            return "platform"
+        default:
+            return nil
+        }
+    }
+
+    private func analyticsSourceReportID(for reportName: String) -> String {
+        switch normalizeReportName(reportName) {
+        case "app-store-downloads":
+            return "acquisition"
+        case "app-store-discovery-and-engagement":
+            return "engagement"
+        case "app-sessions":
+            return "usage"
+        case "app-crashes":
+            return "performance"
+        default:
+            return normalizeReportName(reportName)
+        }
+    }
+
+    private func appGroupValue(_ record: QueryRecord) -> String {
+        let appName = nonEmptyString(record.dimensions["app"]) ?? nonEmptyString(record.dimensions["name"]) ?? ""
+        let appAppleIdentifier = record.dimensions["appAppleIdentifier"] ?? ""
+        let sourceReport = normalizeReportName(record.dimensions["sourceReport"] ?? "")
+        if ["summary-sales", "pre-order", "subscription-offer-redemption"].contains(sourceReport),
+           appAppleIdentifier.isEmpty == false {
+            return appAppleIdentifier
+        }
+        guard appAppleIdentifier.isEmpty == false else { return appName }
+        guard appName.isEmpty == false, appName != appAppleIdentifier else { return appAppleIdentifier }
+        return "\(appName) (\(appAppleIdentifier))"
+    }
+
+    private func subscriptionGroupValue(_ record: QueryRecord) -> String {
+        let subscriptionName = record.dimensions["subscription"] ?? ""
+        let subscriptionAppleIdentifier = record.dimensions["subscriptionAppleIdentifier"] ?? record.dimensions["sku"] ?? ""
+        guard subscriptionAppleIdentifier.isEmpty == false else { return subscriptionName }
+        guard subscriptionName.isEmpty == false, subscriptionName != subscriptionAppleIdentifier else {
+            return subscriptionAppleIdentifier
+        }
+        return "\(subscriptionName) (\(subscriptionAppleIdentifier))"
+    }
+
+    private func parseDelimitedLine(_ line: String, delimiter: Character) -> [String] {
+        var cells: [String] = []
+        var current = ""
+        var isQuoted = false
+        var index = line.startIndex
+
+        while index < line.endIndex {
+            let character = line[index]
+            if character == "\"" {
+                if isQuoted {
+                    let nextIndex = line.index(after: index)
+                    if nextIndex < line.endIndex, line[nextIndex] == "\"" {
+                        current.append("\"")
+                        index = line.index(after: nextIndex)
+                        continue
+                    }
+                    isQuoted = false
+                    index = line.index(after: index)
+                    continue
+                }
+                if current.isEmpty {
+                    isQuoted = true
+                    index = line.index(after: index)
+                    continue
+                }
+            }
+
+            if character == delimiter, isQuoted == false {
+                cells.append(current)
+                current = ""
+            } else {
+                current.append(character)
+            }
+            index = line.index(after: index)
+        }
+
+        cells.append(current)
+        return cells
     }
 
     private func aggregate(
@@ -1040,7 +1583,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
             case .fiscalMonth:
                 group[item.rawValue] = record.dimensions["fiscalMonth"] ?? date?.fiscalMonthString ?? ""
             case .app:
-                group[item.rawValue] = record.dimensions["app"] ?? ""
+                group[item.rawValue] = appGroupValue(record)
             case .version:
                 group[item.rawValue] = record.dimensions["version"] ?? ""
             case .territory:
@@ -1062,15 +1605,21 @@ public final class AnalyticsEngine: @unchecked Sendable {
             case .sourceReport:
                 group[item.rawValue] = record.dimensions["sourceReport"] ?? ""
             case .subscription:
-                group[item.rawValue] = record.dimensions["subscription"] ?? ""
+                group[item.rawValue] = subscriptionGroupValue(record)
             }
         }
         return group
     }
 
     private func makeRecordsTable(dataset: QueryDataset, records: [QueryRecord]) -> TableModel {
-        let dimensionKeys = Set(records.flatMap { $0.dimensions.keys }).sorted()
-        let metricKeys = Set(records.flatMap { $0.metrics.keys }).sorted()
+        let dimensionKeys = orderedDimensionKeys(Set(records.flatMap { $0.dimensions.keys }), dataset: dataset)
+        let hiddenMetrics = hiddenTableMetricKeys(for: dataset)
+        let metricKeys = orderedMetricKeys(
+            Set(records.flatMap { $0.metrics.keys })
+                .subtracting(Set(dimensionKeys))
+                .subtracting(hiddenMetrics),
+            dataset: dataset
+        )
         let columns = dimensionKeys + metricKeys
         let rows = records.map { record in
             columns.map { key in
@@ -1086,9 +1635,15 @@ public final class AnalyticsEngine: @unchecked Sendable {
         return TableModel(title: dataset.rawValue, columns: columns, rows: rows)
     }
 
-    private func makeAggregateTable(rows: [QueryAggregateRow]) -> TableModel {
-        let groupKeys = Set(rows.flatMap { $0.group.keys }).sorted()
-        let metricKeys = Set(rows.flatMap { $0.metrics.keys }).sorted()
+    private func makeAggregateTable(dataset: QueryDataset, rows: [QueryAggregateRow]) -> TableModel {
+        let groupKeys = orderedDimensionKeys(Set(rows.flatMap { $0.group.keys }), dataset: dataset)
+        let hiddenMetrics = hiddenTableMetricKeys(for: dataset)
+        let metricKeys = orderedMetricKeys(
+            Set(rows.flatMap { $0.metrics.keys })
+                .subtracting(Set(groupKeys))
+                .subtracting(hiddenMetrics),
+            dataset: dataset
+        )
         let columns = groupKeys + metricKeys
         let tableRows = rows.map { row in
             columns.map { key in
@@ -1104,9 +1659,14 @@ public final class AnalyticsEngine: @unchecked Sendable {
         return TableModel(columns: columns, rows: tableRows)
     }
 
-    private func makeComparisonTable(rows: [QueryComparisonRow]) -> TableModel {
-        let groupKeys = Set(rows.flatMap { $0.group.keys }).sorted()
-        let metricKeys = Set(rows.flatMap { $0.metrics.keys }).sorted()
+    private func makeComparisonTable(dataset: QueryDataset, rows: [QueryComparisonRow]) -> TableModel {
+        let groupKeys = orderedDimensionKeys(Set(rows.flatMap { $0.group.keys }), dataset: dataset)
+        let hiddenMetrics = hiddenTableMetricKeys(for: dataset)
+        let metricKeys = orderedMetricKeys(
+            Set(rows.flatMap { $0.metrics.keys })
+                .subtracting(hiddenMetrics),
+            dataset: dataset
+        )
         let columns = groupKeys + metricKeys.flatMap { ["\($0) current", "\($0) previous", "\($0) delta", "\($0) delta%"] }
         let tableRows = rows.map { row in
             var mapped: [String] = []
@@ -1121,6 +1681,64 @@ public final class AnalyticsEngine: @unchecked Sendable {
             return mapped
         }
         return TableModel(columns: columns, rows: tableRows)
+    }
+
+    private func orderedDimensionKeys(_ keys: Set<String>, dataset: QueryDataset) -> [String] {
+        let preferred = preferredDimensionOrder(for: dataset)
+        return keys.sorted { lhs, rhs in
+            columnSortKey(lhs, preferred: preferred) < columnSortKey(rhs, preferred: preferred)
+        }
+    }
+
+    private func orderedMetricKeys(_ keys: Set<String>, dataset: QueryDataset) -> [String] {
+        let preferred = preferredMetricOrder(for: dataset)
+        return keys.sorted { lhs, rhs in
+            columnSortKey(lhs, preferred: preferred) < columnSortKey(rhs, preferred: preferred)
+        }
+    }
+
+    private func columnSortKey(_ key: String, preferred: [String]) -> (Int, String) {
+        let rank = preferred.firstIndex(of: key) ?? preferred.count + 1
+        return (rank, key)
+    }
+
+    private func preferredDimensionOrder(for dataset: QueryDataset) -> [String] {
+        switch dataset {
+        case .sales:
+            return ["date", "fiscalMonth", "app", "version", "territory", "device", "currency", "customerCurrency", "sku", "subscription", "sourceReport", "reportType"]
+        case .reviews:
+            return ["date", "app", "territory", "rating", "responseState", "sourceReport", "reportType", "title", "reviewerNickname"]
+        case .finance:
+            return ["date", "fiscalMonth", "territory", "currency", "sku", "sourceReport", "reportType"]
+        case .analytics:
+            return ["date", "fiscalMonth", "app", "bundleID", "version", "territory", "device", "platform", "sourceReport", "reportType"]
+        case .brief:
+            return []
+        }
+    }
+
+    private func preferredMetricOrder(for dataset: QueryDataset) -> [String] {
+        switch dataset {
+        case .sales:
+            return ["proceeds", "sales", "units", "installs", "purchases", "refunds", "qualifiedConversions", "activeSubscriptions", "subscribers", "billingRetry", "gracePeriod"]
+        case .reviews:
+            return ["count", "averageRating", "repliedRate", "lowRatingRatio", "repliedCount", "lowRatingCount", "unresolvedCount"]
+        case .finance:
+            return ["proceeds", "amount", "units"]
+        case .analytics:
+            return ["impressions", "pageViews", "appUnits", "sessions", "crashes"]
+        case .brief:
+            return []
+        }
+    }
+
+    private func hiddenTableMetricKeys(for dataset: QueryDataset) -> Set<String> {
+        switch dataset {
+        case .reviews:
+            return ["rating"]
+        default:
+            return []
+        }
     }
 
     private struct MonetaryNormalizationResult {
@@ -1327,60 +1945,99 @@ public final class AnalyticsEngine: @unchecked Sendable {
         String(format: "%.2f%%", value * 100)
     }
 
-    private func loadSalesSummaryRows(window: PTDateWindow) throws -> [ParsedSalesRow] {
-        let manifest = try cacheStore.loadManifest()
-        let salesEntries = manifest.filter { record in
-            record.source == .sales && record.reportType == "SALES"
-        }
+    private func loadSalesSummaryRows(
+        window: PTDateWindow,
+        freshnessCutoff: Date? = nil
+    ) throws -> [ParsedSalesRow] {
+        let fullMonths = Set(fullFiscalMonthsContained(in: window))
+        let salesEntries = deduplicatedCachedEntries(try scopedManifestEntries(source: .sales) {
+            guard $0.reportType == "SALES" else { return false }
+            if let freshnessCutoff, $0.fetchedAt < freshnessCutoff {
+                return false
+            }
+            if $0.reportSubType == "SUMMARY_MONTHLY" {
+                return fullMonths.contains($0.reportDateKey)
+            }
+            return reportDateKey($0.reportDateKey, isWithin: window)
+        })
         let monthlyEntries = salesEntries.filter { $0.reportSubType == "SUMMARY_MONTHLY" }
         let dailyEntries = salesEntries.filter { $0.reportSubType != "SUMMARY_MONTHLY" }
-        let fullMonths = Set(fullFiscalMonthsContained(in: window))
+        let monthsWithMonthly = Set(monthlyEntries.map(\.reportDateKey))
 
         var rows: [ParsedSalesRow] = []
         for entry in dailyEntries {
-            let parsed = try parser.parseSales(tsv: loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
+            let parsed = try parser.parseSales(tsv: try loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
             rows.append(contentsOf: parsed.filter { row in
-                fullMonths.contains(row.businessDatePT.fiscalMonthString) == false
+                let fiscalMonth = row.businessDatePT.fiscalMonthString
+                return fullMonths.contains(fiscalMonth) == false || monthsWithMonthly.contains(fiscalMonth) == false
             })
         }
         for entry in monthlyEntries where fullMonths.contains(entry.reportDateKey) {
             rows.append(contentsOf: try parser.parseSales(
-                tsv: loadFile(entry.filePath),
+                tsv: try loadFile(entry.filePath),
                 fallbackDatePT: PTDate("\(entry.reportDateKey)-01").date
             ))
         }
         return rows
     }
 
-    private func loadSalesGenericRows(reportType: String) throws -> [ParsedSalesRow] {
-        let manifest = try cacheStore.loadManifest()
-        let entries = manifest.filter { $0.source == .sales && $0.reportType == reportType }
+    private func loadSalesGenericRows(
+        window: PTDateWindow,
+        reportType: String,
+        freshnessCutoff: Date? = nil
+    ) throws -> [ParsedSalesRow] {
+        let entries = deduplicatedCachedEntries(try scopedManifestEntries(source: .sales) {
+            guard $0.reportType == reportType else { return false }
+            if let freshnessCutoff, $0.fetchedAt < freshnessCutoff {
+                return false
+            }
+            return reportDateKey($0.reportDateKey, isWithin: window)
+        })
         return try entries.flatMap { entry in
-            try parser.parseSales(tsv: loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
+            try parser.parseSales(tsv: try loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
         }
     }
 
-    private func loadSubscriptionRows(reportType: String) throws -> [ParsedSubscriptionRow] {
-        let manifest = try cacheStore.loadManifest()
-        let entries = manifest.filter { $0.source == .sales && $0.reportType == reportType }
+    private func loadSubscriptionRows(
+        window: PTDateWindow,
+        reportType: String,
+        freshnessCutoff: Date? = nil
+    ) throws -> [ParsedSubscriptionRow] {
+        let entries = deduplicatedCachedEntries(try scopedManifestEntries(source: .sales) {
+            guard $0.reportType == reportType else { return false }
+            if let freshnessCutoff, $0.fetchedAt < freshnessCutoff {
+                return false
+            }
+            return reportDateKey($0.reportDateKey, isWithin: window)
+        })
         return try entries.flatMap { entry in
-            try parser.parseSubscription(tsv: loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
+            try parser.parseSubscription(tsv: try loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
         }
     }
 
-    private func loadSubscriptionEventRows() throws -> [ParsedSubscriptionEventRow] {
-        let manifest = try cacheStore.loadManifest()
-        let entries = manifest.filter { $0.source == .sales && $0.reportType == "SUBSCRIPTION_EVENT" }
+    private func loadSubscriptionEventRows(window: PTDateWindow, freshnessCutoff: Date? = nil) throws -> [ParsedSubscriptionEventRow] {
+        let entries = deduplicatedCachedEntries(try scopedManifestEntries(source: .sales) {
+            guard $0.reportType == "SUBSCRIPTION_EVENT" else { return false }
+            if let freshnessCutoff, $0.fetchedAt < freshnessCutoff {
+                return false
+            }
+            return reportDateKey($0.reportDateKey, isWithin: window)
+        })
         return try entries.flatMap { entry in
-            try parser.parseSubscriptionEvent(tsv: loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
+            try parser.parseSubscriptionEvent(tsv: try loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
         }
     }
 
-    private func loadSubscriberRows() throws -> [ParsedSubscriberDailyRow] {
-        let manifest = try cacheStore.loadManifest()
-        let entries = manifest.filter { $0.source == .sales && $0.reportType == "SUBSCRIBER" }
+    private func loadSubscriberRows(window: PTDateWindow, freshnessCutoff: Date? = nil) throws -> [ParsedSubscriberDailyRow] {
+        let entries = deduplicatedCachedEntries(try scopedManifestEntries(source: .sales) {
+            guard $0.reportType == "SUBSCRIBER" else { return false }
+            if let freshnessCutoff, $0.fetchedAt < freshnessCutoff {
+                return false
+            }
+            return reportDateKey($0.reportDateKey, isWithin: window)
+        })
         return try entries.flatMap { entry in
-            try parser.parseSubscriberDaily(tsv: loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
+            try parser.parseSubscriberDaily(tsv: try loadFile(entry.filePath), fallbackDatePT: PTDate(entry.reportDateKey).date)
         }
     }
 
@@ -1397,7 +2054,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
         let day = Calendar.pacific.startOfDay(for: row.businessDatePT)
         guard window.startDate <= day, day <= window.endDate else { return nil }
         guard filters.territory.isEmpty || matchesAny(row.territory, in: filters.territory) else { return nil }
-        guard filters.currency.isEmpty || matchesAny(row.currencyOfProceeds, in: filters.currency) || matchesAny(row.customerCurrency, in: filters.currency) else { return nil }
+        guard filters.currency.isEmpty || matchesAny(row.currencyOfProceeds, in: filters.currency) else { return nil }
         guard filters.device.isEmpty || matchesAny(row.device, in: filters.device) else { return nil }
         guard filters.sku.isEmpty || matchesAny(row.sku, in: filters.sku) else { return nil }
         if filters.app.isEmpty == false {
@@ -1415,6 +2072,7 @@ public final class AnalyticsEngine: @unchecked Sendable {
             dimensions: [
                 "date": row.businessDatePT.ptDateString,
                 "app": row.parentIdentifier.isEmpty ? row.title : row.parentIdentifier,
+                "appAppleIdentifier": row.parentIdentifier.isEmpty ? row.appleIdentifier : row.parentIdentifier,
                 "name": row.title,
                 "sku": row.sku,
                 "version": row.version,
@@ -1446,8 +2104,9 @@ public final class AnalyticsEngine: @unchecked Sendable {
         let day = Calendar.pacific.startOfDay(for: row.businessDatePT)
         guard window.startDate <= day, day <= window.endDate else { return nil }
         guard filters.territory.isEmpty || matchesAny(row.country, in: filters.territory) else { return nil }
-        guard filters.currency.isEmpty || matchesAny(row.proceedsCurrency, in: filters.currency) || matchesAny(row.customerCurrency, in: filters.currency) else { return nil }
+        guard filters.currency.isEmpty || matchesAny(row.proceedsCurrency, in: filters.currency) else { return nil }
         guard filters.device.isEmpty || matchesAny(row.device, in: filters.device) else { return nil }
+        guard filters.sku.isEmpty || matchesAny(row.subscriptionAppleID, in: filters.sku) else { return nil }
         guard filters.subscription.isEmpty || matchesAny(row.subscriptionName, in: filters.subscription) || matchesAny(row.subscriptionAppleID, in: filters.subscription) else {
             return nil
         }
@@ -1459,8 +2118,10 @@ public final class AnalyticsEngine: @unchecked Sendable {
             dimensions: [
                 "date": row.businessDatePT.ptDateString,
                 "app": row.appName,
+                "appAppleIdentifier": row.appAppleID,
                 "sku": row.subscriptionAppleID,
                 "subscription": row.subscriptionName,
+                "subscriptionAppleIdentifier": row.subscriptionAppleID,
                 "subscriptionDuration": row.standardSubscriptionDuration,
                 "territory": row.country,
                 "currency": row.proceedsCurrency,
@@ -1490,8 +2151,11 @@ public final class AnalyticsEngine: @unchecked Sendable {
         guard filters.territory.isEmpty || matchesAny(row.country, in: filters.territory) else { return nil }
         guard filters.currency.isEmpty || matchesAny(row.proceedsCurrency, in: filters.currency) else { return nil }
         guard filters.device.isEmpty || matchesAny(row.device, in: filters.device) else { return nil }
-        guard filters.subscription.isEmpty || matchesAny(row.subscriptionName, in: filters.subscription) else { return nil }
-        if filters.app.isEmpty == false, matchesAny(row.appName, in: filters.app) == false {
+        guard filters.sku.isEmpty || matchesAny(row.subscriptionAppleID, in: filters.sku) else { return nil }
+        guard filters.subscription.isEmpty || matchesAny(row.subscriptionName, in: filters.subscription) || matchesAny(row.subscriptionAppleID, in: filters.subscription) else { return nil }
+        if filters.app.isEmpty == false,
+           matchesAny(row.appName, in: filters.app) == false,
+           matchesAny(row.appAppleID, in: filters.app) == false {
             return nil
         }
         return QueryRecord(
@@ -1499,8 +2163,10 @@ public final class AnalyticsEngine: @unchecked Sendable {
             dimensions: [
                 "date": row.businessDatePT.ptDateString,
                 "app": row.appName,
+                "appAppleIdentifier": row.appAppleID,
                 "subscription": row.subscriptionName,
                 "sku": row.subscriptionAppleID,
+                "subscriptionAppleIdentifier": row.subscriptionAppleID,
                 "subscriptionDuration": row.standardSubscriptionDuration,
                 "eventName": row.eventName,
                 "territory": row.country,
@@ -1527,8 +2193,11 @@ public final class AnalyticsEngine: @unchecked Sendable {
         guard filters.territory.isEmpty || matchesAny(row.country, in: filters.territory) else { return nil }
         guard filters.currency.isEmpty || matchesAny(row.proceedsCurrency, in: filters.currency) else { return nil }
         guard filters.device.isEmpty || matchesAny(row.device, in: filters.device) else { return nil }
-        guard filters.subscription.isEmpty || matchesAny(row.subscriptionName, in: filters.subscription) else { return nil }
-        if filters.app.isEmpty == false, matchesAny(row.appName, in: filters.app) == false {
+        guard filters.sku.isEmpty || matchesAny(row.subscriptionAppleID, in: filters.sku) else { return nil }
+        guard filters.subscription.isEmpty || matchesAny(row.subscriptionName, in: filters.subscription) || matchesAny(row.subscriptionAppleID, in: filters.subscription) else { return nil }
+        if filters.app.isEmpty == false,
+           matchesAny(row.appName, in: filters.app) == false,
+           matchesAny(row.appAppleID, in: filters.app) == false {
             return nil
         }
         return QueryRecord(
@@ -1536,8 +2205,10 @@ public final class AnalyticsEngine: @unchecked Sendable {
             dimensions: [
                 "date": row.businessDatePT.ptDateString,
                 "app": row.appName,
+                "appAppleIdentifier": row.appAppleID,
                 "subscription": row.subscriptionName,
                 "sku": row.subscriptionAppleID,
+                "subscriptionAppleIdentifier": row.subscriptionAppleID,
                 "subscriptionDuration": row.standardSubscriptionDuration,
                 "territory": row.country,
                 "currency": row.proceedsCurrency,
@@ -1555,12 +2226,10 @@ public final class AnalyticsEngine: @unchecked Sendable {
         )
     }
 
-    private func loadFile(_ path: String) -> String {
+    private func loadFile(_ path: String) throws -> String {
         let url = URL(fileURLWithPath: path)
-        guard (try? LocalFileSecurity.validateOwnerOnlyFile(url)) != nil else {
-            return ""
-        }
-        return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+        try LocalFileSecurity.validateOwnerOnlyFile(url)
+        return try String(contentsOfFile: path, encoding: .utf8)
     }
 
     private func normalizedGroupKey(_ group: [String: String]) -> String {
@@ -1821,10 +2490,35 @@ public final class AnalyticsEngine: @unchecked Sendable {
         value: Int
     ) throws -> ResolvedSelection {
         let calendar = Calendar.pacific
-        guard let start = calendar.date(byAdding: component, value: value, to: current.window.startDate),
-              let end = calendar.date(byAdding: component, value: value, to: current.window.endDate)
+        let spanDays = calendar.dateComponents([.day], from: current.window.startDate, to: current.window.endDate).day ?? 0
+        guard let shiftedStart = calendar.date(byAdding: component, value: value, to: current.window.startDate),
+              let shiftedEnd = calendar.date(byAdding: component, value: value, to: current.window.endDate)
         else {
             throw AnalyticsEngineError.invalidQuery("Unable to resolve comparison range.")
+        }
+        let start: Date
+        let end: Date
+        if let fullPeriodComponent = fullCalendarPeriodComponent(
+            window: current.window,
+            comparisonComponent: component,
+            calendar: calendar
+        ) {
+            guard let shiftedInterval = calendar.dateInterval(of: fullPeriodComponent, for: shiftedStart),
+                  let shiftedIntervalEnd = calendar.date(byAdding: .day, value: -1, to: shiftedInterval.end)
+            else {
+                throw AnalyticsEngineError.invalidQuery("Unable to resolve comparison range.")
+            }
+            start = shiftedInterval.start
+            end = shiftedIntervalEnd
+        } else if calendar.isDate(shiftedStart, inSameDayAs: shiftedEnd) {
+            guard let spanPreservingStart = calendar.date(byAdding: .day, value: -spanDays, to: shiftedEnd) else {
+                throw AnalyticsEngineError.invalidQuery("Unable to resolve comparison range.")
+            }
+            start = spanPreservingStart
+            end = shiftedEnd
+        } else {
+            start = shiftedStart
+            end = shiftedEnd
         }
         let window = PTDateWindow(startDate: start, endDate: end)
         return ResolvedSelection(
@@ -1844,6 +2538,64 @@ public final class AnalyticsEngine: @unchecked Sendable {
             return nil
         }
         return shifted.fiscalMonthString
+    }
+
+    private func scopedManifestEntries(
+        source: ReportSource,
+        matching include: (CachedReportRecord) -> Bool = { _ in true }
+    ) throws -> [CachedReportRecord] {
+        let entries = try cacheStore.loadManifest().filter { $0.source == source && include($0) }
+        guard let vendorNumber else {
+            let distinctVendors = Set(entries.compactMap { nonEmptyString($0.vendorNumber) })
+            let hasLegacyEntries = entries.contains { nonEmptyString($0.vendorNumber) == nil }
+            if distinctVendors.count > 1 {
+                throw AnalyticsEngineError.invalidQuery(
+                    "Cached \(source.rawValue) reports contain multiple vendor numbers. Set vendorNumber or clear the cache before querying."
+                )
+            }
+            if hasLegacyEntries, distinctVendors.isEmpty == false {
+                throw AnalyticsEngineError.invalidQuery(
+                    "Cached \(source.rawValue) reports mix legacy unscoped entries with vendor-tagged entries. Set vendorNumber or clear the cache before querying."
+                )
+            }
+            return entries
+        }
+        let scopedEntries = entries.filter { nonEmptyString($0.vendorNumber) == vendorNumber }
+        let legacyEntries = entries.filter { nonEmptyString($0.vendorNumber) == nil }
+        let otherScopedVendors = Set(entries.compactMap { record -> String? in
+            guard let scopedVendor = nonEmptyString(record.vendorNumber), scopedVendor != vendorNumber else {
+                return nil
+            }
+            return scopedVendor
+        })
+
+        if scopedEntries.isEmpty == false {
+            if legacyEntries.isEmpty {
+                return scopedEntries
+            }
+            if otherScopedVendors.isEmpty == false {
+                throw AnalyticsEngineError.invalidQuery(
+                    "Cached \(source.rawValue) reports mix legacy unscoped entries with vendor-tagged entries for multiple accounts. Clear the cache or resync before querying."
+                )
+            }
+            return scopedEntries + legacyEntries
+        }
+        if otherScopedVendors.isEmpty {
+            return legacyEntries
+        }
+        if legacyEntries.isEmpty {
+            return []
+        }
+        throw AnalyticsEngineError.invalidQuery(
+            "Cached \(source.rawValue) reports mix legacy unscoped entries with vendor-tagged entries for other accounts. Clear the cache or resync before querying."
+        )
+    }
+
+    private func reportDateKey(_ reportDateKey: String, isWithin window: PTDateWindow) -> Bool {
+        guard let date = PTDate(reportDateKey).date else {
+            return false
+        }
+        return date >= window.startDate && date <= window.endDate
     }
 
     private enum ProductKind {
@@ -1936,5 +2688,74 @@ public final class AnalyticsEngine: @unchecked Sendable {
         if orderType.contains("renew") { return true }
         let proceedsReason = row.proceedsReason.lowercased()
         return proceedsReason.contains("renew")
+    }
+
+    private func deduplicatedCachedEntries(_ entries: [CachedReportRecord]) -> [CachedReportRecord] {
+        var byKey: [String: CachedReportRecord] = [:]
+        for entry in entries {
+            let key = [
+                entry.source.rawValue,
+                entry.reportType,
+                entry.reportSubType,
+                entry.reportDateKey
+            ].joined(separator: "|")
+            guard let existing = byKey[key] else {
+                byKey[key] = entry
+                continue
+            }
+            byKey[key] = preferredCachedEntry(between: existing, and: entry)
+        }
+        return Array(byKey.values)
+    }
+
+    private func preferredCachedEntry(
+        between lhs: CachedReportRecord,
+        and rhs: CachedReportRecord
+    ) -> CachedReportRecord {
+        let lhsScoped = nonEmptyString(lhs.vendorNumber) != nil
+        let rhsScoped = nonEmptyString(rhs.vendorNumber) != nil
+        if lhsScoped != rhsScoped {
+            return rhsScoped ? rhs : lhs
+        }
+        if lhs.fetchedAt != rhs.fetchedAt {
+            return lhs.fetchedAt < rhs.fetchedAt ? rhs : lhs
+        }
+        return lhs.filePath <= rhs.filePath ? lhs : rhs
+    }
+
+    private func isFullCalendarPeriod(
+        window: PTDateWindow,
+        component: Calendar.Component,
+        calendar: Calendar
+    ) -> Bool {
+        guard let interval = calendar.dateInterval(of: component, for: window.startDate) else {
+            return false
+        }
+        let intervalEnd = calendar.date(byAdding: .day, value: -1, to: interval.end) ?? interval.end
+        return calendar.isDate(window.startDate, inSameDayAs: interval.start)
+            && calendar.isDate(window.endDate, inSameDayAs: intervalEnd)
+    }
+
+    private func fullCalendarPeriodComponent(
+        window: PTDateWindow,
+        comparisonComponent: Calendar.Component,
+        calendar: Calendar
+    ) -> Calendar.Component? {
+        switch comparisonComponent {
+        case .month:
+            return isFullCalendarPeriod(window: window, component: .month, calendar: calendar) ? .month : nil
+        case .year:
+            if isFullCalendarPeriod(window: window, component: .year, calendar: calendar) {
+                return .year
+            }
+            if isFullCalendarPeriod(window: window, component: .month, calendar: calendar) {
+                return .month
+            }
+            return nil
+        default:
+            return isFullCalendarPeriod(window: window, component: comparisonComponent, calendar: calendar)
+                ? comparisonComponent
+                : nil
+        }
     }
 }

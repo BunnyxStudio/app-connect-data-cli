@@ -244,7 +244,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
     }
 
     private func build(resolved period: ResolvedBriefSummaryPeriod) async throws -> BriefSummaryReport {
-        try await prefetch(period: period)
+        let prefetchWarnings = try await prefetch(period: period)
 
         // Run all queries concurrently via TaskGroup instead of async let
         // to avoid a Swift runtime bug in async let deallocation (rdar://FB13720144).
@@ -489,8 +489,16 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             resolvedFinanceByTerritory,
             resolvedFinanceByCurrency
         ]
+        let noCurrentDataWarning = makeNoCurrentDataWarning(
+            currentSales: resolvedCurrentSummarySales.data.records,
+            currentSubscriptions: resolvedCurrentSubscriptions.data.records,
+            currentReviews: resolvedCurrentReviews.data.records,
+            currentFinance: resolvedCurrentFinance
+        )
         let warnings = deduplicatedWarnings(
-            warningSources.compactMap { $0 }.flatMap { $0.warnings }
+            prefetchWarnings
+                + warningSources.compactMap { $0 }.flatMap { $0.warnings }
+                + (noCurrentDataWarning.map { [$0] } ?? [])
         )
 
         return BriefSummaryReport(
@@ -574,34 +582,33 @@ struct BriefSummaryBuilder: @unchecked Sendable {
         return formatter.string(from: date)
     }
 
-    private func prefetch(period: ResolvedBriefSummaryPeriod) async throws {
-        guard offline == false, let syncService = runtime.syncService else { return }
+    private func prefetch(period: ResolvedBriefSummaryPeriod) async throws -> [QueryWarning] {
+        guard offline == false, let syncService = runtime.syncService else { return [] }
+        var warnings: [QueryWarning] = []
 
         let unionWindow = PTDateWindow(
             startDate: min(period.currentWindow.startDate, period.previousWindow.startDate),
             endDate: max(period.currentWindow.endDate, period.previousWindow.endDate)
         )
         // Always sync summary sales first; this must succeed.
-        _ = try await syncService.syncSalesReports(
+        let summarySales = try await syncService.syncSalesReports(
             window: unionWindow,
             reportFamilies: [.summarySales],
             force: refresh
         )
-        // Best-effort: subscription data may be unavailable for accounts
-        // without auto-renewable subscriptions or when Apple has not yet
-        // published the report for the requested date.
+        warnings.append(contentsOf: summarySales.warnings)
         do {
-            _ = try await syncService.syncSalesReports(
+            let subscriptions = try await syncService.syncSalesReports(
                 window: unionWindow,
                 reportFamilies: [.subscription, .subscriptionEvent],
                 force: refresh
             )
+            warnings.append(contentsOf: subscriptions.warnings)
         } catch {
-            // Proceed without subscription data; brief sections that depend
-            // on it will render empty and be filtered out.
+            // Subscription reports are optional for brief summaries.
         }
         if period.includesFinance {
-            _ = try await syncService.syncFinance(
+            let finance = try await syncService.syncFinance(
                 fiscalMonths: Array(
                     Set([
                         period.currentWindow.endDate.fiscalMonthString,
@@ -609,9 +616,10 @@ struct BriefSummaryBuilder: @unchecked Sendable {
                     ])
                 ).sorted(),
                 regionCodes: ["ZZ", "Z1"],
-                reportTypes: [.financial, .financeDetail],
+                reportTypes: [.financial],
                 force: refresh
             )
+            warnings.append(contentsOf: finance.warnings)
         }
         let reviewQuery = ASCCustomerReviewQuery(sort: .newest)
         _ = try await syncService.syncReviews(
@@ -620,6 +628,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             totalLimit: nil,
             query: reviewQuery
         )
+        return deduplicatedWarnings(warnings)
     }
 
     private func loadFinanceOverview(period: ResolvedBriefSummaryPeriod) async throws -> QueryResult? {
@@ -730,7 +739,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             overviewRow("Purchase Rate", ratio(sales["purchases"]?.current ?? 0, sales["installs"]?.current ?? 0), ratio(sales["purchases"]?.previous ?? 0, sales["installs"]?.previous ?? 0), .percentage),
             overviewRow("Refund Units", sales["refunds"]?.current ?? 0, sales["refunds"]?.previous ?? 0, .number),
             overviewRow("Qualified Conversions", sales["qualifiedConversions"]?.current ?? 0, sales["qualifiedConversions"]?.previous ?? 0, .number),
-            overviewRow("Active Subs", currentActiveSubscriptions, previousActiveSubscriptions, .number),
+            overviewRow("Active Subscriptions", currentActiveSubscriptions, previousActiveSubscriptions, .number),
             overviewRow("Billing Retry Rate", currentRetryRate, previousRetryRate, .percentage),
             overviewRow("Grace Rate", currentGraceRate, previousGraceRate, .percentage),
             overviewRow("Review Count", reviews["count"]?.current ?? 0, reviews["count"]?.previous ?? 0, .number),
@@ -740,7 +749,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
 
         var note = "Subscription metrics use the latest snapshot inside each range."
         if period.includesFinance {
-            rows.insert(overviewRow("Sales-Finance Gap", currentSalesProceeds - currentFinanceProceeds, previousSalesProceeds - previousFinanceProceeds, .currency), at: 1)
+            rows.insert(overviewRow("Sales vs Finance Gap", currentSalesProceeds - currentFinanceProceeds, previousSalesProceeds - previousFinanceProceeds, .currency), at: 1)
             rows.insert(overviewRow("Finance Proceeds", currentFinanceProceeds, previousFinanceProceeds, .currency), at: 1)
             note = "Finance compares fiscal months. Subscription metrics use the latest snapshot inside each range."
         }
@@ -749,7 +758,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: "Overview",
             note: note,
             table: TableModel(
-                columns: ["metric", "current", "compare", "change"],
+                columns: ["metric", "current", "compare", "% change"],
                 rows: rows
             )
         )
@@ -780,7 +789,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: "Top Products",
             note: "Ranked by current-period proceeds.",
             table: TableModel(
-                columns: ["product", "sku", "proceeds", "change", "units", "purchases"],
+                columns: ["product", "sku", "proceeds", "% change", "units", "purchases"],
                 rows: rows
             )
         )
@@ -810,7 +819,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: "Subscription Plan Mix",
             note: "Latest subscription snapshot inside each range.",
             table: TableModel(
-                columns: ["plan", "active", "change", "share", "retryRate", "graceRate"],
+                columns: ["plan", "active subscriptions", "% change", "share", "retry rate", "grace rate"],
                 rows: rows
             )
         )
@@ -846,7 +855,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: title,
             note: note,
             table: TableModel(
-                columns: [keyName, "active", "change", "retryRate", "graceRate"],
+                columns: [keyName, "active subscriptions", "% change", "retry rate", "grace rate"],
                 rows: rows
             )
         )
@@ -872,7 +881,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: "Subscription Event Mix",
             note: nil,
             table: TableModel(
-                columns: ["event", "count", "change", "share"],
+                columns: ["event", "count", "% change", "share"],
                 rows: rows
             )
         )
@@ -900,7 +909,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
             title: "Cancel Reasons",
             note: "Derived from subscription-event names.",
             table: TableModel(
-                columns: ["reason", "count", "change"],
+                columns: ["reason", "count", "% change"],
                 rows: rows
             )
         )
@@ -943,17 +952,17 @@ struct BriefSummaryBuilder: @unchecked Sendable {
         currentFinance: [QueryRecord]
     ) -> BriefSummarySection {
         let rows = [
-            ["reportingCurrency", reportingCurrency],
-            ["displayTimeZone", displayTimeZone.identifier],
-            ["currentRange", period.currentWindow.startDatePT + " to " + period.currentWindow.endDatePT],
-            ["compareRange", period.previousWindow.startDatePT + " to " + period.previousWindow.endDatePT],
-            ["nextRolloverLocal", formatLocalDateTime(PTReportAvailability().nextAvailabilityDate)],
-            ["salesAsOf", salesAsOfValue(period: period, currentSales: currentSales)],
-            ["subscriptionAsOf", maxDateString(currentSubscriptions)],
-            ["reviewsAsOf", maxDateString(currentReviews)],
-            ["salesCoverageDays", String(salesCoverageDays(period: period, currentSales: currentSales))],
-            ["subscriptionCoverageDays", String(distinctDates(currentSubscriptions).count)],
-            ["reviewCoverageDays", String(max(distinctDates(currentReviews).count, distinctDates(previousReviews).count))],
+            ["Reporting Currency", reportingCurrency],
+            ["Display Time Zone", displayTimeZone.identifier],
+            ["Current Range", period.currentWindow.startDatePT + " to " + period.currentWindow.endDatePT],
+            ["Compare Range", period.previousWindow.startDatePT + " to " + period.previousWindow.endDatePT],
+            ["Next Apple Rollover", formatLocalDateTime(PTReportAvailability().nextAvailabilityDate)],
+            ["Sales As Of", salesAsOfValue(period: period, currentSales: currentSales)],
+            ["Subscription Snapshot As Of", maxDateString(currentSubscriptions)],
+            ["Reviews As Of", maxDateString(currentReviews)],
+            ["Sales Coverage Days", String(salesCoverageDays(period: period, currentSales: currentSales))],
+            ["Subscription Coverage Days", String(distinctDates(currentSubscriptions).count)],
+            ["Review Coverage Days", String(distinctDates(currentReviews).count)],
         ] + financeHealthRows(period: period, currentFinance: currentFinance)
 
         return BriefSummarySection(
@@ -970,6 +979,25 @@ struct BriefSummaryBuilder: @unchecked Sendable {
         }
     }
 
+    private func makeNoCurrentDataWarning(
+        currentSales: [QueryRecord],
+        currentSubscriptions: [QueryRecord],
+        currentReviews: [QueryRecord],
+        currentFinance: [QueryRecord]
+    ) -> QueryWarning? {
+        guard currentSales.isEmpty,
+              currentSubscriptions.isEmpty,
+              currentReviews.isEmpty,
+              currentFinance.isEmpty
+        else {
+            return nil
+        }
+        return QueryWarning(
+            code: "summary-no-data",
+            message: "No source data matched the current summary window. Zero values in this summary mean 'no data loaded', not confirmed activity."
+        )
+    }
+
     private func shouldIncludeComparisonRow(
         _ row: QueryComparisonRow,
         columns: [String],
@@ -982,6 +1010,7 @@ struct BriefSummaryBuilder: @unchecked Sendable {
         let displayedMetrics = columns.compactMap(metricName(for:))
         return displayedMetrics.contains { metric in
             (row.metrics[metric]?.current ?? 0) != 0
+                || (row.metrics[metric]?.previous ?? 0) != 0
         }
     }
 
@@ -1001,29 +1030,40 @@ struct BriefSummaryBuilder: @unchecked Sendable {
     private func financeHealthRows(period: ResolvedBriefSummaryPeriod, currentFinance: [QueryRecord]) -> [[String]] {
         guard period.includesFinance else { return [] }
         return [
-            ["financeFiscalMonth", period.currentWindow.endDate.fiscalMonthString],
-            ["financeRows", String(currentFinance.count)],
+            ["Finance Fiscal Month", period.currentWindow.endDate.fiscalMonthString],
+            ["Finance Rows", String(currentFinance.count)],
         ]
     }
 
-    private func salesAsOfValue(period: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> String {
-        if period.period == .lastMonth, currentSales.isEmpty == false {
-            return period.currentWindow.endDatePT
-        }
+    private func salesAsOfValue(period _: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> String {
         return maxDateString(currentSales)
     }
 
-    private func salesCoverageDays(period: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> Int {
-        if period.period == .lastMonth, currentSales.isEmpty == false {
-            let days = Calendar.pacific.dateComponents([.day], from: period.currentWindow.startDate, to: period.currentWindow.endDate).day ?? 0
-            return days + 1
-        }
+    private func salesCoverageDays(period _: ResolvedBriefSummaryPeriod, currentSales: [QueryRecord]) -> Int {
         return distinctDates(currentSales).count
     }
 
     private func latestSnapshotRows(_ records: [QueryRecord]) -> [QueryRecord] {
-        guard let latestDate = records.compactMap({ $0.dimensions["date"] }).max() else { return [] }
-        return records.filter { $0.dimensions["date"] == latestDate }
+        var latestByKey: [String: QueryRecord] = [:]
+        for record in records {
+            guard let date = record.dimensions["date"] else { continue }
+            let identityDimensions = record.dimensions.reduce(into: [String: String]()) { partial, item in
+                if item.key == "date" || item.key == "reportType" || item.key == "sourceReport" {
+                    return
+                }
+                partial[item.key] = item.value
+            }
+            let identity = snapshotIdentity(identityDimensions)
+            if let existing = latestByKey[identity], (existing.dimensions["date"] ?? "") >= date {
+                continue
+            }
+            latestByKey[identity] = record
+        }
+        return Array(latestByKey.values)
+    }
+
+    private func snapshotIdentity(_ dimensions: [String: String]) -> String {
+        dimensions.keys.sorted().map { "\($0)=\(dimensions[$0] ?? "")" }.joined(separator: "|")
     }
 
     private func maxDateString(_ records: [QueryRecord]) -> String {

@@ -797,6 +797,7 @@ public final class ASCClient: ASCClientProtocol, @unchecked Sendable {
 
         var merged: [ASCLatestReview] = []
         var firstFailure: Error?
+        var cancelledForTotalLimit = false
 
         await withTaskGroup(of: Result<[ASCLatestReview], Error>.self) { group in
             var iterator = apps.makeIterator()
@@ -826,17 +827,21 @@ public final class ASCClient: ASCClientProtocol, @unchecked Sendable {
                 enqueueNextIfNeeded()
             }
 
-            while let result = await group.next() {
+            resultLoop: while let result = await group.next() {
                 switch result {
                 case .success(let reviews):
                     merged.append(contentsOf: reviews)
                 case .failure(let error):
+                    if cancelledForTotalLimit, isCancellationFailure(error) {
+                        continue resultLoop
+                    }
                     if firstFailure == nil {
                         firstFailure = error
                     }
                 }
 
                 if let totalCap = normalizedTotalLimit, merged.count >= totalCap {
+                    cancelledForTotalLimit = true
                     group.cancelAll()
                     continue
                 }
@@ -845,7 +850,7 @@ public final class ASCClient: ASCClientProtocol, @unchecked Sendable {
             }
         }
 
-        if merged.isEmpty, let firstFailure {
+        if let firstFailure {
             throw firstFailure
         }
 
@@ -854,6 +859,24 @@ public final class ASCClient: ASCClientProtocol, @unchecked Sendable {
             return Array(merged.prefix(totalCap))
         }
         return merged
+    }
+
+    private func isCancellationFailure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+        if let urlError = error as? URLError {
+            return urlError.code == .cancelled
+        }
+        if let clientError = error as? ASCClientError {
+            switch clientError {
+            case .network(let underlying):
+                return isCancellationFailure(underlying)
+            default:
+                return false
+            }
+        }
+        return false
     }
 
     private func fetchReviewsForApp(

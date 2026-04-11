@@ -86,6 +86,7 @@ public struct ParsedSubscriptionEventRow: Sendable {
     public var lineHash: String
     public var businessDatePT: Date
     public var appName: String
+    public var appAppleID: String
     public var subscriptionName: String
     public var subscriptionAppleID: String
     public var standardSubscriptionDuration: String
@@ -101,6 +102,7 @@ public struct ParsedSubscriberDailyRow: Sendable {
     public var lineHash: String
     public var businessDatePT: Date
     public var appName: String
+    public var appAppleID: String
     public var subscriptionName: String
     public var subscriptionAppleID: String
     public var standardSubscriptionDuration: String
@@ -329,7 +331,7 @@ public struct ReportParser: Sendable {
             guard let date else { return nil }
 
             let appName = preferredStringValue(keys: ["app name"], from: fields, index: index)
-            let appAppleID = preferredStringValue(keys: ["app apple id"], from: fields, index: index)
+            let appAppleID = preferredStringValue(keys: ["app apple id", "app apple identifier"], from: fields, index: index)
             let subscriptionName = preferredStringValue(keys: ["subscription name"], from: fields, index: index)
             let subscriptionAppleID = preferredStringValue(keys: ["subscription apple id"], from: fields, index: index)
             let subscriptionGroupID = preferredStringValue(keys: ["subscription group id"], from: fields, index: index)
@@ -441,6 +443,11 @@ public struct ReportParser: Sendable {
                 from: fields,
                 index: index
             )
+            let appAppleID = preferredStringValue(
+                keys: ["app apple id", "app apple identifier"],
+                from: fields,
+                index: index
+            )
             let subscriptionName = preferredStringValue(
                 keys: ["subscription name", "product", "product name"],
                 from: fields,
@@ -495,6 +502,7 @@ public struct ReportParser: Sendable {
                 lineHash: fields.joined(separator: "\t").sha256Hex,
                 businessDatePT: date,
                 appName: appName,
+                appAppleID: appAppleID,
                 subscriptionName: subscriptionName,
                 subscriptionAppleID: subscriptionAppleID,
                 standardSubscriptionDuration: standardSubscriptionDuration,
@@ -525,6 +533,11 @@ public struct ReportParser: Sendable {
 
             let appName = preferredStringValue(
                 keys: ["app name", "title"],
+                from: fields,
+                index: index
+            )
+            let appAppleID = preferredStringValue(
+                keys: ["app apple id", "app apple identifier"],
                 from: fields,
                 index: index
             )
@@ -587,6 +600,7 @@ public struct ReportParser: Sendable {
                 lineHash: fields.joined(separator: "\t").sha256Hex,
                 businessDatePT: date,
                 appName: appName,
+                appAppleID: appAppleID,
                 subscriptionName: subscriptionName,
                 subscriptionAppleID: subscriptionAppleID,
                 standardSubscriptionDuration: standardSubscriptionDuration,
